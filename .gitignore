@@ -1,0 +1,34 @@
+# Secrets — never commit
+API Keys.txt
+*.key
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+backend/data/
+*.egg-info/
+
+# Node / Electron
+node_modules/
+frontend/dist/
+desktop/dist/
+desktop/out/
+desktop/resources/backend/
+
+# Local caches & heavy assets
+assets_library/polyhaven/
+assets_library/blenderkit/
+assets_library/anatomy/
+*.blend1
+*.mp4
+*.mov
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
