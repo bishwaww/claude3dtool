@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import os
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
@@ -58,6 +60,8 @@ from services.elevenlabs_service import ElevenLabsService
 from services.model_catalog import list_models
 from services import blender_bridge as live_blender
 from services.blender_tools import register_blender_tools
+from services import attachments as attachments_svc
+from services import mixamo_library
 
 register_blender_tools()
 from services.pipeline_manager import (
@@ -249,9 +253,117 @@ async def api_validate_path(req: ValidatePathRequest):
 
 @app.get("/api/elevenlabs/voices")
 async def api_list_voices():
-    svc = ElevenLabsService()
-    voices = await svc.list_voices()
-    return {"voices": voices}
+    """All account voices (premade, cloned, generated, saved Voice Library voices)."""
+    return await ElevenLabsService().list_voices()
+
+
+@app.get("/api/elevenlabs/voices/{voice_id}")
+async def api_check_voice(voice_id: str):
+    """Validate a pasted custom Voice ID."""
+    try:
+        return {"ok": True, "voice": await ElevenLabsService().get_voice(voice_id)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/elevenlabs/models")
+async def api_tts_models():
+    return {"models": await ElevenLabsService().list_tts_models()}
+
+
+# ==============================================================================
+# ATTACHMENTS (reference images/videos, custom voiceover, 3D assets, logo)
+# ==============================================================================
+
+@app.post("/api/projects/{project_id}/attachments")
+async def api_upload_attachments(project_id: str, files: list[UploadFile] = File(...), purpose: str = Form("")):
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    ensure_project_folder_structure(proj["target_folder"])
+    out = []
+    for f in files:
+        data = await f.read()
+        try:
+            att = attachments_svc.store_upload(proj, f.filename or "file", data, purpose or None)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        att = await asyncio.to_thread(attachments_svc.process_attachment, att["id"])
+        out.append(attachments_svc.public_view(att))
+        if att["purpose"] == "voiceover":
+            await hub.broadcast(project_id, {"type": "project_updated", "project": get_project(project_id)})
+    return {"attachments": out, "project": get_project(project_id)}
+
+
+@app.get("/api/projects/{project_id}/attachments")
+async def api_list_attachments(project_id: str):
+    return {"attachments": [attachments_svc.public_view(a) for a in attachments_svc.list_attachments(project_id)]}
+
+
+@app.get("/api/attachments/{att_id}/thumb")
+async def api_attachment_thumb(att_id: str):
+    att = attachments_svc.get_attachment(att_id)
+    p = attachments_svc.thumb_path(att) if att else None
+    if not p:
+        raise HTTPException(status_code=404, detail="No preview.")
+    return FileResponse(str(p))
+
+
+@app.post("/api/projects/{project_id}/voiceover")
+async def api_upload_voiceover(project_id: str, file: UploadFile = File(...)):
+    """Mode A: any external voiceover (ElevenLabs website, CapCut, mic...) becomes the narration,
+    word-timed with faster-whisper; the storyboard re-times to it."""
+    proj = get_project(project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    ensure_project_folder_structure(proj["target_folder"])
+    try:
+        att = attachments_svc.store_upload(proj, file.filename or "voiceover.mp3", await file.read(), "voiceover")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    att = await asyncio.to_thread(attachments_svc.process_attachment, att["id"])
+    if att["status"] == "error":
+        raise HTTPException(status_code=400, detail=att["meta"].get("error", "Voiceover processing failed."))
+    updated = get_project(project_id)
+    await hub.broadcast(project_id, {"type": "project_updated", "project": updated})
+    return {"voiceover": att["meta"]["voiceover"], "attachment": attachments_svc.public_view(att), "project": updated}
+
+
+# ==============================================================================
+# MIXAMO LIBRARY
+# ==============================================================================
+
+@app.get("/api/mixamo/library")
+async def api_mixamo_library(refresh: bool = False, project_id: str = ""):
+    extra = []
+    proj = get_project(project_id) if project_id else None
+    if proj:
+        extra.append(Path(proj["target_folder"]) / "assets" / "custom")
+    return await asyncio.to_thread(mixamo_library.scan, extra, refresh)
+
+
+@app.post("/api/mixamo/upload")
+async def api_mixamo_upload(files: list[UploadFile] = File(...)):
+    saved = []
+    for f in files:
+        name = Path(f.filename or "").name
+        if not name.lower().endswith(".fbx"):
+            raise HTTPException(status_code=400, detail=f"{name}: Mixamo files must be .fbx (FBX Binary).")
+        dest = MIXAMO_LIBRARY_DIR / name
+        dest.write_bytes(await f.read())
+        saved.append(str(dest))
+    return {"saved": saved, "library": await asyncio.to_thread(mixamo_library.scan)}
+
+
+@app.post("/api/system/open-folder")
+async def api_open_folder(body: dict[str, Any]):
+    """Open a studio folder (e.g. the Mixamo library) in Windows Explorer."""
+    p = Path(body.get("path", ""))
+    allowed = [MIXAMO_LIBRARY_DIR.resolve()] + [Path(x["target_folder"]).resolve() for x in list_projects()]
+    if not p.is_dir() or not any(p.resolve() == a or a in p.resolve().parents for a in allowed):
+        raise HTTPException(status_code=400, detail="Folder not allowed.")
+    os.startfile(str(p))  # type: ignore[attr-defined]
+    return {"ok": True}
 
 
 @app.post("/api/elevenlabs/preview")
@@ -368,7 +480,14 @@ async def api_project_chat(project_id: str, req: ChatRequest):
     thinking_delta, text_delta, text_block_end, tool_start, tool_result, notice,
     project_updated, done, error.
     """
-    user_msg = add_message(project_id, "user", req.message)
+    att_views = [attachments_svc.public_view(a) for a in
+                 (attachments_svc.get_attachment(i) for i in req.attachments) if a and a["project_id"] == project_id]
+    user_msg = add_message(project_id, "user", req.message,
+                           metadata={"attachments": att_views} if att_views else None)
+    user_content: Any = req.message
+    if att_views:
+        blocks = attachments_svc.content_blocks([a["id"] for a in att_views])
+        user_content = blocks + [{"type": "text", "text": req.message or "(See the attachments.)"}]
     if not proj.get("topic"):
         update_project(project_id, topic=req.message[:140])
     await hub.broadcast(project_id, {"type": "log", "stage": "claude", "message": f"Director prompt: {req.message[:200]}"})
@@ -385,7 +504,7 @@ async def api_project_chat(project_id: str, req: ChatRequest):
         try:
             result = await run_chat_turn(
                 project_id=project_id,
-                user_content=req.message,
+                user_content=user_content,
                 emit=emit,
                 model=req.model,
                 thinking=req.thinking,

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Brain, CheckCircle2, ChevronRight, Loader2, Wrench, XCircle } from 'lucide-react';
 import type { ChatMessage, ToolCallInfo, TokenUsageEntry } from '../types';
+import { SentAttachments } from './Attachments';
 
 export const Markdown: React.FC<{ text: string }> = ({ text }) => (
   <div className="sk-markdown">
@@ -93,11 +94,15 @@ const AssistantHeader: React.FC = () => (
 
 export const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message: m }) => {
   if (m.role === 'user') {
+    const atts = m.metadata?.attachments || [];
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-card border border-borderStrong text-ink whitespace-pre-wrap">
-          {m.content}
-        </div>
+      <div className="flex flex-col items-end">
+        {atts.length > 0 && <SentAttachments items={atts} />}
+        {m.content && (
+          <div className="max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-card border border-borderStrong text-ink whitespace-pre-wrap">
+            {m.content}
+          </div>
+        )}
       </div>
     );
   }

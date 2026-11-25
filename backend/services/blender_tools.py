@@ -105,7 +105,46 @@ async def t_save(args: dict[str, Any], ctx: TurnContext) -> ToolOutput:
     return f"Saved {res.get('file')}"
 
 
+async def t_list_assets(args: dict[str, Any], ctx: TurnContext) -> ToolOutput:
+    import asyncio
+    from services import mixamo_library
+    from services.attachments import list_attachments
+    pdir = _project_dir(ctx)
+    custom = pdir / "assets" / "custom"
+    lib = await asyncio.to_thread(mixamo_library.scan, [custom])
+    files = []
+    if custom.is_dir():
+        files = [{"path": str(p), "size_kb": round(p.stat().st_size / 1024, 1)} for p in sorted(custom.rglob("*"))
+                 if p.is_file() and p.suffix.lower() in {".blend", ".glb", ".gltf", ".fbx", ".obj", ".png", ".jpg", ".hdr", ".exr"}]
+    refs = []
+    for a in list_attachments(ctx.project_id):
+        r = {"file": a["filename"], "purpose": a["purpose"], "kind": a["kind"], "status": a["status"]}
+        vo = a["meta"].get("voiceover")
+        if vo:
+            r["voiceover"] = {"applied_as_narration": True, "seconds": vo["total_duration"], "transcript": vo["transcript"]}
+        refs.append(r)
+
+    def slim(items):
+        return [{k: i[k] for k in ("name", "path", "frames", "height_m", "bone_prefix") if i.get(k) is not None} for i in items]
+    return json.dumps({
+        "mixamo_characters": slim(lib["characters"]),
+        "mixamo_animations": slim(lib["animations"]),
+        "project_custom_assets": files,
+        "attachments": refs,
+        "hint": "Characters: blender_import_asset(kind='mixamo', path=<character>, anim_path=<animation>) or "
+                "zdf.import_mixamo_character / zdf.add_mixamo_animation in code. If no character exists, ask the "
+                "user to download one from mixamo.com (FBX Binary, With Skin) into the Mixamo library.",
+    }, ensure_ascii=False)[:40000]
+
+
 def register_blender_tools() -> None:
+    REGISTRY.register(
+        "list_assets",
+        "List usable assets: Mixamo characters and animation clips in the library (with frame counts and heights), "
+        "the project's custom asset files (user uploads), and chat attachments. Use paths from here with "
+        "blender_import_asset or in Blender code.",
+        {"type": "object", "properties": {}},
+        t_list_assets, label="Listing assets")
     REGISTRY.register(
         "blender_get_scene_info",
         "Inspect the LIVE Blender session: file, frame range, cameras, timeline markers, collections, objects "

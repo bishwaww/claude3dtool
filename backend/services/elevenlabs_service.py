@@ -10,6 +10,14 @@ import httpx
 from database import get_settings
 
 ELEVENLABS_BASE = "https://api.elevenlabs.io/v1"
+ELEVENLABS_V2 = "https://api.elevenlabs.io/v2"
+
+TTS_MODELS = [
+    {"model_id": "eleven_multilingual_v2", "name": "Eleven Multilingual v2 (best quality)"},
+    {"model_id": "eleven_v3", "name": "Eleven v3 (most expressive)"},
+    {"model_id": "eleven_turbo_v2_5", "name": "Eleven Turbo v2.5 (fast, cheaper)"},
+    {"model_id": "eleven_flash_v2_5", "name": "Eleven Flash v2.5 (fastest)"},
+]
 
 FALLBACK_VOICES = [
     {"voice_id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep Calm Narrator)", "category": "premade", "preview_url": ""},
@@ -42,31 +50,75 @@ class ElevenLabsService:
             "Accept": "application/json",
         }
 
-    async def list_voices(self) -> list[dict[str, Any]]:
+    @staticmethod
+    def _voice_entry(v: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "voice_id": v.get("voice_id"),
+            "name": v.get("name"),
+            "category": v.get("category", "premade"),  # premade | cloned | generated | professional | ...
+            "preview_url": v.get("preview_url", ""),
+            "labels": v.get("labels", {}) or {},
+            "description": (v.get("description") or "")[:200],
+        }
+
+    async def list_voices(self) -> dict[str, Any]:
+        """Every voice on the account: premade, cloned, generated and Voice Library voices the
+        user has added (GET /v2/voices, paginated; falls back to /v1/voices)."""
         if not self.api_key:
-            return FALLBACK_VOICES
+            return {"voices": FALLBACK_VOICES, "source": "fallback", "error": "No ElevenLabs API key configured."}
+        headers = {"xi-api-key": self.api_key}
+        voices: list[dict[str, Any]] = []
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                token: Optional[str] = None
+                for _ in range(20):  # up to 2000 voices
+                    params: dict[str, Any] = {"page_size": 100, "include_total_count": "true"}
+                    if token:
+                        params["next_page_token"] = token
+                    r = await client.get(f"{ELEVENLABS_V2}/voices", headers=headers, params=params)
+                    if r.status_code == 404:
+                        break
+                    r.raise_for_status()
+                    data = r.json()
+                    voices += [self._voice_entry(v) for v in data.get("voices", [])]
+                    token = data.get("next_page_token")
+                    if not data.get("has_more") or not token:
+                        break
+                if not voices:
+                    r = await client.get(f"{ELEVENLABS_BASE}/voices", headers=headers)
+                    r.raise_for_status()
+                    voices = [self._voice_entry(v) for v in r.json().get("voices", [])]
+            order = {"cloned": 0, "professional": 1, "generated": 2, "premade": 3}
+            voices.sort(key=lambda v: (order.get(v["category"], 2), (v["name"] or "").lower()))
+            return {"voices": voices or FALLBACK_VOICES, "source": "live" if voices else "fallback", "error": None}
+        except httpx.HTTPStatusError as e:
+            err = f"ElevenLabs {e.response.status_code}: {e.response.text[:200]}"
+        except Exception as e:
+            err = str(e)
+        return {"voices": FALLBACK_VOICES, "source": "fallback", "error": err}
+
+    async def get_voice(self, voice_id: str) -> dict[str, Any]:
+        """Validate a pasted voice ID (any voice in the user's library or a shared one they added)."""
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(f"{ELEVENLABS_BASE}/voices/{voice_id.strip()}", headers={"xi-api-key": self.api_key})
+            if r.status_code in (400, 404):
+                raise ValueError("ElevenLabs does not know this voice ID. If it's from the Voice Library, "
+                                 "add it to 'My Voices' on elevenlabs.io first.")
+            r.raise_for_status()
+            return self._voice_entry(r.json())
+
+    async def list_tts_models(self) -> list[dict[str, Any]]:
+        if not self.api_key:
+            return TTS_MODELS
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                r = await client.get(
-                    f"{ELEVENLABS_BASE}/voices",
-                    headers={"xi-api-key": self.api_key},
-                )
+                r = await client.get(f"{ELEVENLABS_BASE}/models", headers={"xi-api-key": self.api_key})
                 r.raise_for_status()
-                data = r.json()
-                voices = []
-                for v in data.get("voices", []):
-                    voices.append(
-                        {
-                            "voice_id": v.get("voice_id"),
-                            "name": v.get("name"),
-                            "category": v.get("category", "premade"),
-                            "preview_url": v.get("preview_url", ""),
-                            "labels": v.get("labels", {}),
-                        }
-                    )
-                return voices or FALLBACK_VOICES
+                live = [{"model_id": m["model_id"], "name": m.get("name", m["model_id"])}
+                        for m in r.json() if m.get("can_do_text_to_speech")]
+                return live or TTS_MODELS
         except Exception:
-            return FALLBACK_VOICES
+            return TTS_MODELS
 
     async def preview_voice(self, voice_id: str, text: str) -> bytes:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -79,7 +131,7 @@ class ElevenLabsService:
                 },
                 json={
                     "text": text[:280],
-                    "model_id": "eleven_multilingual_v2",
+                    "model_id": get_settings().get("elevenlabs_model_id") or "eleven_multilingual_v2",
                     "voice_settings": {
                         "stability": 0.45,
                         "similarity_boost": 0.78,

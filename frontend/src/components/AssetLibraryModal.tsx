@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useStudioStore } from '../store/studioStore';
+import { MixamoPanel } from './MixamoPanel';
 
 export const AssetLibraryModal: React.FC = () => {
   const {
@@ -208,46 +209,8 @@ export const AssetLibraryModal: React.FC = () => {
             )}
           </div>
 
-          {/* Local Mixamo Character & Animation Library */}
-          <div className="p-4 rounded-xl bg-canvas border border-borderSubtle space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-semibold text-ink">
-                <User className="w-4 h-4 text-violet-400" />
-                Local Mixamo Character & Animation Library ({cat?.mixamo?.length ?? 0})
-              </div>
-              <span className="font-mono text-[10px] text-inkDim truncate max-w-xs">
-                {assetLibrary?.mixamo_folder}
-              </span>
-            </div>
-
-            {!cat?.mixamo?.length ? (
-              <div className="p-3 rounded-lg bg-card text-inkDim text-[11px]">
-                Drop Mixamo <span className="font-mono text-inkMuted">.fbx</span> or{' '}
-                <span className="font-mono text-inkMuted">.glb</span> rigged characters into{' '}
-                <span className="font-mono text-inkMuted">assets_library/mixamo/</span> (e.g.,{' '}
-                <span className="font-mono">male_talking.fbx</span>,{' '}
-                <span className="font-mono">female_phone.fbx</span>) and click Rescan.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {cat.mixamo.map((item) => (
-                  <div key={item.path} className="p-2.5 rounded-lg bg-card border border-borderSubtle">
-                    <div className="font-medium text-ink truncate">{item.name}</div>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 font-mono">
-                        {item.ext} · {item.size_kb} KB
-                      </span>
-                      {item.tags.map((t) => (
-                        <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-canvas text-inkMuted">
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Mixamo library (indexed with a headless Blender probe) */}
+          <MixamoPanel />
 
           {/* NIH 3D Anatomy Cache */}
           <div className="p-4 rounded-xl bg-canvas border border-borderSubtle space-y-2">

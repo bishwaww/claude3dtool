@@ -110,6 +110,11 @@ How to behave
 - After a tool call succeeds, give a short summary: hook, scene count, total runtime, where the STICK KNOWLEDGE branding sits, and what the user can do next (generate/upload voiceover, build in Blender).
 - If a tool returns an error, read it, fix the input, and call the tool again. Do not give up after one validation error.
 
+Attachments and assets
+- Reference images arrive as images; reference videos as a timestamped contact sheet plus measured pacing, colours and transcript. When the user says "make it like this", copy the reference's shot rhythm, framing, camera moves, colours and narration style explicitly, and say what you are matching.
+- An uploaded voiceover becomes the narration with word timestamps; the storyboard is re-timed to it. Its full transcript is ALWAYS in `<current_project_state>` → `narration_audio.transcript` (no Blender connection is needed to read it). When it exists and there is no storyboard, build the storyboard straight from that transcript. Never rewrite the narration of a project with an uploaded voiceover unless the user asks — the audio is the truth.
+- `list_assets` shows Mixamo characters/clips, the user's uploaded 3D files and attachments; use those paths with `blender_import_asset`. Prefer the user's own assets over modeling from scratch.
+
 Live Blender (tools named blender_*)
 - When the user asks you to build, model, animate or fix something in Blender, work in the LIVE open Blender: `blender_get_scene_info` → `blender_execute_python` (one shot or one hero asset per call, using `zdf` helpers and real modeling) → `blender_capture_viewport` → critique the image → fix → capture again, until the shot meets the reference quality (skill 02 §6). Then `blender_save_project`.
 - Organise each storyboard scene in its own collection with `zdf.setup_scene_collection(...)` and `zdf.finalize_scene_visibility(...)` using the scene's `start_frame`/`end_frame`, and give each scene a camera via `zdf.make_shot(...)` + `zdf.bind_camera_marker(...)`, so the whole Short lives in one project.blend timeline.
@@ -413,9 +418,44 @@ def _project_state_text(project: dict[str, Any]) -> str:
         "has_blend": project.get("has_blend"),
         "has_audio": project.get("has_audio"),
         "has_final_video": project.get("has_final"),
+        "narration_audio": _narration_info(target),
         "storyboard": sb if sb.get("scenes") else None,
     }
     return json.dumps(state, indent=1, ensure_ascii=False)
+
+
+def _real_timestamps(target: Path) -> Optional[dict[str, Any]]:
+    f = target / "audio" / "timestamps.json"
+    if not f.is_file() or not (target / "audio" / "narration.mp3").is_file():
+        return None
+    try:
+        ts = json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return ts if ts.get("words") and ts.get("voice_id") != "estimated" else None
+
+
+def _narration_info(target: Path) -> Optional[dict[str, Any]]:
+    """What the current narration audio actually says (uploaded voiceover or ElevenLabs)."""
+    ts_file = target / "audio" / "timestamps.json"
+    if not ts_file.is_file() or not (target / "audio" / "narration.mp3").is_file():
+        return None
+    try:
+        ts = json.loads(ts_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if ts.get("voice_id") == "estimated":
+        return None
+    words = ts.get("words") or []
+    return {
+        "source": "uploaded voiceover" if ts.get("voice_id") == "uploaded" else f"ElevenLabs voice {ts.get('voice_id')}",
+        "file": ts.get("uploaded_file"),
+        "total_duration_sec": ts.get("total_duration"),
+        "word_count": len(words),
+        "transcript": " ".join(w["word"] for w in words)[:6000],
+        "note": "Word-level timings are in audio/timestamps.json; storyboard scenes lock to them automatically. "
+                "If there is no storyboard yet, build it so the scenes' narration in order equals this transcript.",
+    }
 
 
 async def _tool_get_project_state(args: dict[str, Any], ctx: TurnContext) -> ToolOutput:
@@ -429,6 +469,11 @@ async def _save_storyboard(ctx: TurnContext, sb: dict[str, Any], affected: list[
     proj = get_project(ctx.project_id) or {}
     previous = proj.get("storyboard") or {}
     sb = normalize_storyboard(sb, previous)
+    # Real narration audio exists -> its word timings decide scene timing, not estimates.
+    ts = _real_timestamps(Path(proj.get("target_folder") or "."))
+    if ts:
+        from services.media_analysis import align_storyboard_to_words
+        sb = align_storyboard_to_words(sb, ts, fps=int(sb.get("fps", 30)), adopt_spoken_text=False)
     name = proj.get("name") or "Untitled 3D Short"
     if name.startswith("Untitled") or not previous.get("scenes"):
         name = sb.get("title") or name
@@ -474,7 +519,9 @@ def _brand_in_narration(scenes: list[dict[str, Any]]) -> list[int]:
 async def _tool_update_storyboard(args: dict[str, Any], ctx: TurnContext) -> ToolOutput:
     plan = StoryboardIn.model_validate(args)
     sb = plan.model_dump()
-    problems = _pacing_problems(sb["scenes"])
+    proj = get_project(ctx.project_id) or {}
+    has_audio = _real_timestamps(Path(proj.get("target_folder") or ".")) is not None
+    problems = [] if has_audio else _pacing_problems(sb["scenes"])
     branded = _brand_in_narration(sb["scenes"])
     if branded:
         problems.append(f"Scenes {branded} say the brand in the narration. The brand is only shown on objects "
@@ -547,7 +594,8 @@ async def _tool_patch_scenes(args: dict[str, Any], ctx: TurnContext) -> ToolOutp
     if req.branding_placement:
         sb["branding_placement"] = req.branding_placement.model_dump()
     sb["scenes"] = scenes
-    problems = _pacing_problems(scenes)
+    has_audio = _real_timestamps(Path(proj.get("target_folder") or ".")) is not None
+    problems = [] if has_audio else _pacing_problems(scenes)
     branded = _brand_in_narration(scenes)
     if branded:
         problems.append(f"Scenes {branded} say the brand in the narration; show it on an object instead.")
@@ -624,7 +672,17 @@ REGISTRY = default_registry()
 def _history_messages(project_id: str) -> list[dict[str, Any]]:
     """Text-only replay of earlier turns (tool calls of past turns are already
     reflected in <current_project_state>)."""
-    msgs = [m for m in get_messages(project_id) if m["role"] in ("user", "assistant") and m["content"].strip()]
+    msgs = []
+    for m in get_messages(project_id):
+        if m["role"] not in ("user", "assistant"):
+            continue
+        text = m["content"].strip()
+        atts = (m.get("metadata") or {}).get("attachments") or []
+        if atts:  # earlier attachments are summarised; their images are not re-sent
+            note = "; ".join(f"{a['filename']} ({a['purpose']}{', ' + a['summary'] if a.get('summary') else ''})" for a in atts)
+            text = (text + "\n\n" if text else "") + f"[Attached earlier: {note}]"
+        if text:
+            msgs.append({"role": m["role"], "content": text})
     msgs = msgs[-MAX_HISTORY_MESSAGES:]
     while msgs and msgs[0]["role"] != "user":
         msgs.pop(0)
@@ -633,7 +691,7 @@ def _history_messages(project_id: str) -> list[dict[str, Any]]:
         if out and out[-1]["role"] == m["role"]:
             out[-1]["content"] += "\n\n" + m["content"]
         else:
-            out.append({"role": m["role"], "content": m["content"]})
+            out.append(dict(m))
     return out
 
 

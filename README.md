@@ -14,6 +14,17 @@ A local, Claude Desktop-inspired AI Chat & Automated 3D Explainer Production Sui
 4. Enter your **Target Output Folder** in the sidebar (e.g. `D:\Videos\StickKnowledge\Ep01`) and describe your 3D explainer Short in chat.
 5. Click **Launch & Connect Blender** in the chat header. Blender opens on `<target>/project.blend` and Claude builds the shots live, checking each one through the camera.
 
+## Attachments, voiceover & characters
+
+- **Paperclip / drag-and-drop / paste** in the chat bar:
+  - *Reference images* go to Claude's vision.
+  - *Reference videos* are broken down locally: a keyframe contact sheet every ~1.25 s, hard cuts, backdrop colours, and a word-timed transcript with wpm (FFmpeg + faster-whisper). Claude gets all of it.
+  - *3D assets* (`.blend .glb .gltf .fbx .obj …`) and textures are copied to `<target>/assets/custom/`.
+  - A *logo* re-renders every diegetic brand texture.
+- **Upload voiceover** (header button, or drop audio into the chat): any `.mp3/.wav/.m4a` made on the ElevenLabs website, in CapCut, or with a mic becomes `audio/narration.mp3`. faster-whisper writes word-level `audio/timestamps.json`, and the storyboard re-times to the spoken words. No ElevenLabs credits needed.
+- **ElevenLabs** (Settings): every voice on your account (premade, cloned, generated, Voice Library voices you saved), any custom Voice ID, and the TTS model (Multilingual v2, v3, Turbo/Flash …).
+- **Mixamo** (Asset Library): download from mixamo.com as FBX Binary (character *With Skin*, clips *Without Skin*, *In Place* for walks), then drop the files into `assets_library/mixamo/`. A headless Blender probe indexes each file (character vs. clip, bones, frames), and Claude finds them with `list_assets`.
+
 ## Live Blender bridge
 
 `blender_addon/stick_knowledge_bridge` is a Blender add-on that serves JSON-RPC on `127.0.0.1:9876` (next free port up to 9881; the port and a session token are written to `%TEMP%\stick_knowledge_bridge.json`). Socket I/O runs on a background thread; every `bpy` call runs on Blender's main thread through a timer, so the UI never freezes.

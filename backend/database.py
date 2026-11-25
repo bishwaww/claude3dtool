@@ -72,6 +72,18 @@ def init_db() -> None:
                 cost_usd REAL DEFAULT 0.0,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                kind TEXT NOT NULL,          -- image | video | audio | model | other
+                purpose TEXT NOT NULL,       -- reference | asset | logo | voiceover
+                filename TEXT NOT NULL,
+                path TEXT NOT NULL,
+                status TEXT DEFAULT 'ready', -- processing | ready | error
+                meta_json TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
             """
         )
         conn.commit()
@@ -84,6 +96,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "claude_model": DEFAULT_CLAUDE_MODEL,
     "extended_thinking": True,
     "thinking_effort": "high",
+    "whisper_model": "small.en",
+    "elevenlabs_model_id": "eleven_multilingual_v2",
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "pNInz6obpgDQGcFmaJgB",
     "elevenlabs_voice_name": "Adam (Default)",
@@ -225,6 +239,7 @@ def delete_project(project_id: str) -> bool:
     conn = get_conn()
     try:
         conn.execute("DELETE FROM messages WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM attachments WHERE project_id = ?", (project_id,))
         cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cur.rowcount > 0

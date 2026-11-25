@@ -458,8 +458,10 @@ class PipelineManager:
             voice_id=voice_id,
             output_audio_path=paths["audio"] / "narration.mp3",
             output_timestamps_path=paths["audio"] / "timestamps.json",
+            model_id=settings.get("elevenlabs_model_id") or "eleven_multilingual_v2",
         )
-        sb = sync_storyboard_to_timestamps(sb, ts_data, fps=int(sb.get("fps", 30)))
+        from services.media_analysis import align_storyboard_to_words
+        sb = align_storyboard_to_words(sb, ts_data, fps=int(sb.get("fps", 30)), adopt_spoken_text=False)
 
         updated = update_project(project_id, storyboard=sb, status="voice_synced")
         save_project_meta_file(updated)  # type: ignore

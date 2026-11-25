@@ -32,3 +32,8 @@ assets_library/anatomy/
 Thumbs.db
 .vscode/
 .idea/
+
+# Mixamo / user libraries (large binary files stay local)
+assets_library/mixamo/*.fbx
+assets_library/mixamo/index.json
+assets_library/custom/

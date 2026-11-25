@@ -12,6 +12,7 @@ import type {
   ThinkingEffort,
   TokenUsageSummary,
   ToolCallInfo,
+  AttachmentView,
   BlenderStatus,
   LiveCapture,
   LiveRenderStatus,
@@ -82,7 +83,9 @@ interface StudioState {
   selectProject: (projectId: string) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
   saveStoryboardEdits: (storyboard: StoryboardPlan) => Promise<void>;
-  sendPrompt: (message: string) => Promise<void>;
+  sendPrompt: (message: string, attachments?: AttachmentView[]) => Promise<void>;
+  uploadVoiceover: (file: File) => Promise<void>;
+  ensureProject: () => Promise<Project | null>;
   stopStreaming: () => void;
   pollBlender: () => Promise<void>;
   launchBlender: () => Promise<void>;
@@ -458,13 +461,39 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
   },
 
-  sendPrompt: async (message) => {
+  ensureProject: async () => {
+    return get().activeProject ?? (await get().createNewProject());
+  },
+
+  uploadVoiceover: async (file) => {
+    const active = await get().ensureProject();
+    if (!active) return;
+    get().showToast('info', `Transcribing ${file.name} for word-level timing…`);
+    try {
+      const res = await api.uploadVoiceover(active.id, file);
+      const v = res.voiceover;
+      set((s) => ({
+        activeProject: res.project,
+        projects: s.projects.map((p) => (p.id === res.project.id ? res.project : p)),
+        mediaVersion: s.mediaVersion + 1,
+      }));
+      get().showToast(
+        'success',
+        `Voiceover set: ${v.total_duration.toFixed(1)} s, ${v.stats.word_count} words (~${v.stats.wpm} wpm)` +
+          (v.aligned_storyboard ? ' — storyboard re-timed to it.' : '. Ask Claude to build the storyboard from it.')
+      );
+    } catch (e: any) {
+      get().showToast('error', `Voiceover failed: ${e.message}`);
+    }
+  },
+
+  sendPrompt: async (message, attachments = []) => {
     const trimmed = message.trim();
-    if (!trimmed) return;
+    if (!trimmed && !attachments.length) return;
 
     let active = get().activeProject;
     if (!active) {
-      active = await get().createNewProject(trimmed.slice(0, 42));
+      active = await get().createNewProject((trimmed || attachments[0]?.filename || 'Untitled 3D Short').slice(0, 42));
       if (!active) return;
     }
 
@@ -473,6 +502,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       project_id: active.id,
       role: 'user',
       content: trimmed,
+      metadata: attachments.length ? { attachments } : undefined,
       created_at: new Date().toISOString(),
     };
     const settings = get().settings;
@@ -508,6 +538,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           model: settings?.claude_model,
           thinking: settings?.extended_thinking ?? true,
           effort: settings?.thinking_effort ?? 'high',
+          attachments: attachments.map((a) => a.id),
         },
         (evt) => {
           switch (evt.type) {

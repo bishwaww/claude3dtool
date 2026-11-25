@@ -12,6 +12,8 @@ class SettingsPayload(BaseModel):
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"  # Adam default
     elevenlabs_voice_name: str = "Adam (Default)"
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    whisper_model: str = "small.en"
     blender_path: str = ""
     blenderkit_source_path: str = r"D:\B Software LK\blender.crt\blenderkit"
     blenderkit_api_key: str = ""
@@ -112,6 +114,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = None  # per-message model override from the chat-bar switcher
     thinking: Optional[bool] = None
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
+    attachments: list[str] = Field(default_factory=list)  # attachment ids uploaded beforehand
     auto_generate_voice: bool = False
     auto_build_blend: bool = False
 

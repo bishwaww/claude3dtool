@@ -6,6 +6,8 @@ export interface Settings {
   elevenlabs_api_key: string;
   elevenlabs_voice_id: string;
   elevenlabs_voice_name: string;
+  elevenlabs_model_id: string;
+  whisper_model: string;
   blender_path: string;
   blenderkit_source_path: string;
   blenderkit_api_key: string;
@@ -44,6 +46,48 @@ export interface ToolCallInfo {
   summary?: string;
   running?: boolean;
   image_url?: string;
+}
+
+export type AttachmentPurpose = 'reference' | 'asset' | 'logo' | 'voiceover';
+
+export interface AttachmentView {
+  id: string;
+  kind: 'image' | 'video' | 'audio' | 'model' | 'other';
+  purpose: AttachmentPurpose;
+  filename: string;
+  status: 'processing' | 'ready' | 'error';
+  path: string;
+  error?: string | null;
+  thumb_url?: string;
+  summary?: string;
+}
+
+export interface VoicesResponse {
+  voices: ElevenLabsVoice[];
+  source: 'live' | 'fallback';
+  error: string | null;
+}
+
+export interface MixamoItem {
+  name: string;
+  path: string;
+  folder: string;
+  size_kb: number;
+  kind: 'character' | 'animation' | 'mesh' | 'unknown';
+  bones?: number | null;
+  bone_prefix?: string | null;
+  frames?: number | null;
+  height_m?: number | null;
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface MixamoLibrary {
+  folder: string;
+  characters: MixamoItem[];
+  animations: MixamoItem[];
+  other: MixamoItem[];
+  probed_now: number;
 }
 
 export interface BlenderStatus {
@@ -95,6 +139,8 @@ export interface ElevenLabsVoice {
   name: string;
   category?: string;
   preview_url?: string;
+  description?: string;
+  labels?: Record<string, string>;
 }
 
 export interface AssetRequirement {
@@ -170,6 +216,7 @@ export interface ChatMessage {
     affected_scenes?: number[];
     usage?: TokenUsageEntry;
     tool_calls?: ToolCallInfo[];
+    attachments?: AttachmentView[];
     thinking?: string;
     model?: string;
     error?: boolean;

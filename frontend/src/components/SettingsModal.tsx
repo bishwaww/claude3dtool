@@ -27,6 +27,10 @@ export const SettingsModal: React.FC = () => {
 
   const [form, setForm] = useState<Settings | null>(null);
   const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
+  const [voicesNote, setVoicesNote] = useState<string | null>(null);
+  const [ttsModels, setTtsModels] = useState<{ model_id: string; name: string }[]>([]);
+  const [customVoiceId, setCustomVoiceId] = useState('');
+  const [checkingVoice, setCheckingVoice] = useState(false);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const [detectingBlender, setDetectingBlender] = useState(false);
@@ -40,11 +44,32 @@ export const SettingsModal: React.FC = () => {
       setLoadingVoices(true);
       api
         .listVoices()
-        .then((res) => setVoices(res.voices))
+        .then((res) => {
+          setVoices(res.voices);
+          setVoicesNote(res.source === 'live' ? `${res.voices.length} voices on your account` : res.error);
+        })
         .catch(() => {})
         .finally(() => setLoadingVoices(false));
+      api.ttsModels().then((r) => setTtsModels(r.models)).catch(() => {});
+      setCustomVoiceId('');
     }
   }, [settingsModalOpen, settings]);
+
+  const handleCheckVoice = async () => {
+    if (!customVoiceId.trim()) return;
+    setCheckingVoice(true);
+    try {
+      if (form?.elevenlabs_api_key) await api.saveSettings(form);
+      const res = await api.checkVoice(customVoiceId);
+      setVoices((vs) => (vs.some((v) => v.voice_id === res.voice.voice_id) ? vs : [res.voice, ...vs]));
+      setForm((f) => (f ? { ...f, elevenlabs_voice_id: res.voice.voice_id, elevenlabs_voice_name: res.voice.name } : f));
+      showToast('success', `Voice found: ${res.voice.name} (${res.voice.category}). Selected.`);
+    } catch (e: any) {
+      showToast('error', e.message);
+    } finally {
+      setCheckingVoice(false);
+    }
+  };
 
   if (!settingsModalOpen || !form) return null;
 
@@ -205,10 +230,19 @@ export const SettingsModal: React.FC = () => {
                     }}
                     className="flex-1 min-w-0 bg-card border border-borderStrong rounded-lg px-2.5 py-2 text-ink focus:outline-none focus:border-accent"
                   >
-                    {voices.map((v) => (
-                      <option key={v.voice_id} value={v.voice_id}>
-                        {v.name}
-                      </option>
+                    {!voices.some((v) => v.voice_id === form.elevenlabs_voice_id) && (
+                      <option value={form.elevenlabs_voice_id}>{form.elevenlabs_voice_name || form.elevenlabs_voice_id}</option>
+                    )}
+                    {Array.from(new Set(voices.map((v) => v.category || 'other'))).map((cat) => (
+                      <optgroup key={cat} label={cat === 'premade' ? 'Premade' : cat === 'cloned' ? 'My cloned voices' : cat === 'professional' ? 'Professional / Voice Library' : cat === 'generated' ? 'Voice Design (generated)' : cat}>
+                        {voices
+                          .filter((v) => (v.category || 'other') === cat)
+                          .map((v) => (
+                            <option key={v.voice_id} value={v.voice_id}>
+                              {v.name}
+                            </option>
+                          ))}
+                      </optgroup>
                     ))}
                   </select>
                   <button
@@ -225,6 +259,60 @@ export const SettingsModal: React.FC = () => {
                     Preview
                   </button>
                 </div>
+                {voicesNote && <div className="mt-1 text-[11px] text-inkDim">{voicesNote}</div>}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-inkMuted mb-1">Custom Voice ID (any voice you can use on ElevenLabs)</label>
+                <div className="flex gap-1.5">
+                  <input
+                    value={customVoiceId}
+                    onChange={(e) => setCustomVoiceId(e.target.value)}
+                    placeholder="Paste a Voice ID, e.g. 21m00Tcm4TlvDq8ikWAM"
+                    className="flex-1 min-w-0 bg-card border border-borderStrong rounded-lg px-3 py-2 text-ink font-mono focus:outline-none focus:border-accent"
+                  />
+                  <button
+                    onClick={handleCheckVoice}
+                    disabled={!customVoiceId.trim() || checkingVoice}
+                    className="px-3 py-2 rounded-lg bg-card hover:bg-cardHover border border-borderStrong text-ink shrink-0 disabled:opacity-50"
+                  >
+                    {checkingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Use'}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-inkMuted mb-1">Voice Model</label>
+                <select
+                  value={form.elevenlabs_model_id || 'eleven_multilingual_v2'}
+                  onChange={(e) => setField('elevenlabs_model_id', e.target.value)}
+                  className="w-full bg-card border border-borderStrong rounded-lg px-2.5 py-2 text-ink focus:outline-none focus:border-accent"
+                >
+                  {(ttsModels.length ? ttsModels : [{ model_id: form.elevenlabs_model_id || 'eleven_multilingual_v2', name: form.elevenlabs_model_id || 'eleven_multilingual_v2' }]).map((m) => (
+                    <option key={m.model_id} value={m.model_id}>
+                      {m.name} ({m.model_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-card border border-borderSubtle text-[11px] text-inkMuted leading-relaxed">
+              <span className="text-ink font-medium">Own voiceover instead?</span> Use “Upload voiceover” in the chat header
+              (or drop an .mp3/.wav/.m4a into the chat). It's word-timed locally with faster-whisper and the storyboard
+              locks to it — no ElevenLabs credits needed.
+              <div className="mt-2 flex items-center gap-2">
+                <span>Transcription model:</span>
+                <select
+                  value={form.whisper_model || 'small.en'}
+                  onChange={(e) => setField('whisper_model', e.target.value)}
+                  className="bg-canvas border border-borderStrong rounded px-2 py-1 text-ink"
+                >
+                  <option value="base.en">base.en (fastest, English)</option>
+                  <option value="small.en">small.en (recommended, English)</option>
+                  <option value="medium.en">medium.en (most accurate, English, slower)</option>
+                  <option value="small">small (multilingual)</option>
+                  <option value="medium">medium (multilingual, slower)</option>
+                </select>
               </div>
             </div>
           </div>

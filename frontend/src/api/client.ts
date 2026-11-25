@@ -1,4 +1,8 @@
 import type {
+  AttachmentPurpose,
+  AttachmentView,
+  MixamoLibrary,
+  VoicesResponse,
   AssetLibraryResponse,
   BlenderKitStatus,
   BlenderStatus,
@@ -27,6 +31,21 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const data = await res.json();
       detail = data.detail || data.message || detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function upload<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', body });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      detail = data.detail || detail;
     } catch {
       // ignore
     }
@@ -66,7 +85,34 @@ export const api = {
       body: JSON.stringify({ path }),
     }),
 
-  listVoices: () => req<{ voices: ElevenLabsVoice[] }>('/api/elevenlabs/voices'),
+  listVoices: () => req<VoicesResponse>('/api/elevenlabs/voices'),
+  checkVoice: (voiceId: string) =>
+    req<{ ok: boolean; voice: ElevenLabsVoice }>(`/api/elevenlabs/voices/${encodeURIComponent(voiceId.trim())}`),
+  ttsModels: () => req<{ models: { model_id: string; name: string }[] }>('/api/elevenlabs/models'),
+
+  uploadAttachments: async (projectId: string, files: File[], purpose?: AttachmentPurpose) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f, f.name));
+    if (purpose) fd.append('purpose', purpose);
+    return upload<{ attachments: AttachmentView[]; project: Project }>(`/api/projects/${projectId}/attachments`, fd);
+  },
+  uploadVoiceover: async (projectId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return upload<{
+      voiceover: { transcript: string; total_duration: number; aligned_storyboard: boolean; stats: { word_count: number; wpm: number } };
+      project: Project;
+    }>(`/api/projects/${projectId}/voiceover`, fd);
+  },
+  mixamoLibrary: (refresh = false, projectId = '') =>
+    req<MixamoLibrary>(`/api/mixamo/library?refresh=${refresh}&project_id=${encodeURIComponent(projectId)}`),
+  mixamoUpload: async (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f, f.name));
+    return upload<{ saved: string[]; library: MixamoLibrary }>('/api/mixamo/upload', fd);
+  },
+  openFolder: (path: string) =>
+    req<{ ok: boolean }>('/api/system/open-folder', { method: 'POST', body: JSON.stringify({ path }) }),
   previewVoice: async (voice_id: string, text?: string): Promise<Blob> => {
     const res = await fetch('/api/elevenlabs/preview', {
       method: 'POST',
@@ -124,7 +170,7 @@ export const api = {
   /** Streams one Claude turn (Server-Sent Events over a POST response body). */
   streamChat: async (
     projectId: string,
-    body: { message: string; model?: string; thinking?: boolean; effort?: ThinkingEffort },
+    body: { message: string; model?: string; thinking?: boolean; effort?: ThinkingEffort; attachments?: string[] },
     onEvent: (evt: ChatStreamEvent) => void,
     signal?: AbortSignal
   ): Promise<void> => {
