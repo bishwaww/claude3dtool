@@ -13,6 +13,7 @@ from blender_engine.runner import BlenderRunner
 from config import BACKEND_DIR
 from database import get_project, get_settings, get_token_usage_summary, update_project
 from services.asset_manager import AssetManager
+from services.branding import prepare_branding_assets
 from services.claude_director import ClaudeDirector
 from services.elevenlabs_service import (
     ElevenLabsService,
@@ -218,6 +219,7 @@ SCENES_CONFIG = json.loads({json.dumps(json.dumps(scene_entries))})
 
 def main():
     print("[StickKnowledge3D] Initializing Zack D. Films 9:16 studio...")
+    zdf.configure(project_dir=str(PROJECT_DIR), assets_dir=str(ASSETS_DIR))
     zdf.init_zdf_studio(
         render_engine=RENDER_ENGINE,
         bg_mode=SCENES_CONFIG[0]["bg_mode"] if SCENES_CONFIG else "cyan_studio",
@@ -494,6 +496,7 @@ class PipelineManager:
         # 1. Pre-generate crisp STICK KNOWLEDGE transparent decals via Pillow
         await self._progress(project_id, "assets", 10, "Generating STICK KNOWLEDGE diegetic decals...")
         pregenerate_branding_decals(paths["assets"], text="STICK KNOWLEDGE")
+        prepare_branding_assets(paths["assets"])
 
         # Ensure timestamps.json exists even if ElevenLabs hasn't run yet
         ts_path = paths["audio"] / "timestamps.json"

@@ -94,7 +94,7 @@ export interface SceneSpec {
   end_sec: number;
   start_frame: number;
   end_frame: number;
-  bg_mode: 'cyan_studio' | 'dark_space';
+  bg_mode: 'cyan_studio' | 'sky_gradient' | 'dark_space' | 'interior';
   visual_description: string;
   camera_move: string;
   overlays: string[];

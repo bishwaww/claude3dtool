@@ -49,7 +49,7 @@ class SceneSpec(BaseModel):
     end_sec: float = 3.0
     start_frame: int = 1
     end_frame: int = 90
-    bg_mode: Literal["cyan_studio", "dark_space"] = "cyan_studio"
+    bg_mode: Literal["cyan_studio", "sky_gradient", "dark_space", "interior"] = "cyan_studio"
     visual_description: str = ""
     camera_move: str = "Smooth slow dolly push-in with subtle macro DoF"
     overlays: list[str] = Field(default_factory=list)

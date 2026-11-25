@@ -163,25 +163,28 @@ export const StoryboardTab: React.FC = () => {
                 </span>
 
                 <button
-                  onClick={() =>
-                    updateScene(scene.scene_index, {
-                      bg_mode: scene.bg_mode === 'cyan_studio' ? 'dark_space' : 'cyan_studio',
-                    })
-                  }
+                  onClick={() => {
+                    const order = ['cyan_studio', 'sky_gradient', 'dark_space', 'interior'] as const;
+                    const next = order[(order.indexOf(scene.bg_mode) + 1) % order.length];
+                    updateScene(scene.scene_index, { bg_mode: next });
+                  }}
                   className={`px-2 py-0.5 rounded border flex items-center gap-1 ${
-                    scene.bg_mode === 'cyan_studio'
-                      ? 'bg-sky-500/15 border-sky-500/30 text-sky-300'
-                      : 'bg-indigo-950/80 border-indigo-500/30 text-indigo-300'
+                    scene.bg_mode === 'dark_space'
+                      ? 'bg-indigo-950/80 border-indigo-500/30 text-indigo-300'
+                      : scene.bg_mode === 'interior'
+                        ? 'bg-amber-900/30 border-amber-500/30 text-amber-200'
+                        : 'bg-sky-500/15 border-sky-500/30 text-sky-300'
                   }`}
-                  title="Toggle Studio Backdrop Mode"
+                  title="Backdrop (click to cycle): Cyan Studio → Sky Gradient → Dark Space → Interior"
                 >
-                  {scene.bg_mode === 'cyan_studio' ? (
+                  {scene.bg_mode === 'dark_space' ? (
                     <>
-                      <Sun className="w-3 h-3" /> Cyan Studio
+                      <Moon className="w-3 h-3" /> Dark Space
                     </>
                   ) : (
                     <>
-                      <Moon className="w-3 h-3" /> Dark Space
+                      <Sun className="w-3 h-3" />
+                      {scene.bg_mode === 'sky_gradient' ? 'Sky Gradient' : scene.bg_mode === 'interior' ? 'Interior' : 'Cyan Studio'}
                     </>
                   )}
                 </button>

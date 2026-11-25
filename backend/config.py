@@ -12,7 +12,7 @@ DATA_DIR = BACKEND_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = DATA_DIR / "studio.db"
-SKILL_PATH = BACKEND_DIR / "skills" / "stick_knowledge_3d_skill.md"
+SKILLS_DIR = BACKEND_DIR / "skills"  # every *.md here is loaded into the Claude system prompt (cached)
 ZDF_HELPERS_PATH = BACKEND_DIR / "blender_engine" / "zdf_helpers.py"
 ZDF_HELPERS_DOC_PATH = BACKEND_DIR / "blender_engine" / "zdf_helpers_api_doc.md"
 

@@ -110,12 +110,14 @@ How to behave
 - After a tool call succeeds, give a short summary: hook, scene count, total runtime, where the STICK KNOWLEDGE branding sits, and what the user can do next (generate/upload voiceover, build in Blender).
 - If a tool returns an error, read it, fix the input, and call the tool again. Do not give up after one validation error.
 
-Storyboard rules
-- Runtime 30–55 s, usually 10–18 scenes of 1.5–3.5 s so the picture changes every 1.5–3 s.
-- No intro or greeting: word one of the narration is the hook (second person or imperative).
+Storyboard rules (details and measurements are in the skill files below)
+- Runtime ~30–35 s by default (up to ~60 s for essay-style topics), ~175 spoken words per minute, usually 12–18 scenes of 1.25–3 s so the picture changes with every caption phrase.
+- No intro or greeting: word one of the narration is the hook. Pick one script formula from skill 01 (imperative procedure, "If you…" consequence chain, or backwards causal chain) and end on its payoff/sting.
 - `full_narration` is derived automatically from the scenes; do not worry about keeping it in sync.
-- At least one scene has `has_branding: true`, matching `branding_placement.scene_index`. Branding is diegetic (printed on a T-shirt, a label, a phone screen, engraved), never a corner watermark.
-- `bg_mode` is "cyan_studio" by default; use "dark_space" only for space, microscopic, neural or dark-room shots.
+- At least one scene has `has_branding: true`, matching `branding_placement.scene_index`. Branding is diegetic (T-shirt, can/label, phone screen, engraved), never a corner watermark, and never spoken in the narration.
+- Pace: total words ≈ total seconds × 175 / 60 (≈ 90 words for 30 s). The storyboard tools reject narration faster than ~205 wpm.
+- `bg_mode`: "cyan_studio" (default studio look), "sky_gradient" (tabletop/kitchen shots), "dark_space" (cosmic, microscopic, neural), "interior" (real rooms and outdoor sets).
+- Write `visual_description` like a shot list: hero object + material, action, explainer graphic, framing. Put the explainer graphics in `overlays` and the camera move in `camera_move`.
 - Asset queries are 1–3 words; category is one of prop, anatomy, character, material, hdri.
 """
 
@@ -151,7 +153,7 @@ class SceneIn(BaseModel):
     title: str
     narration: str
     duration_sec: float = Field(2.8, ge=0.8, le=10.0)
-    bg_mode: Literal["cyan_studio", "dark_space"] = "cyan_studio"
+    bg_mode: Literal["cyan_studio", "sky_gradient", "dark_space", "interior"] = "cyan_studio"
     visual_description: str
     camera_move: str = "Smooth slow dolly push-in with subtle macro DoF"
     overlays: list[str] = Field(default_factory=list)
@@ -179,7 +181,7 @@ _SCENE_PROPS: dict[str, Any] = {
     "title": {"type": "string", "description": "Short scene title"},
     "narration": {"type": "string", "description": "Exact voiceover line(s) for this scene"},
     "duration_sec": {"type": "number", "description": "1.5–3.5 typical"},
-    "bg_mode": {"type": "string", "enum": ["cyan_studio", "dark_space"]},
+    "bg_mode": {"type": "string", "enum": ["cyan_studio", "sky_gradient", "dark_space", "interior"]},
     "visual_description": {"type": "string", "description": "What the 3D shot shows: hero objects, materials, action, framing"},
     "camera_move": {"type": "string"},
     "overlays": {
@@ -434,14 +436,51 @@ async def _save_storyboard(ctx: TurnContext, sb: dict[str, Any], affected: list[
     return sb
 
 
+TARGET_WPM = 175  # measured 150–187 wpm in the reference Shorts
+MAX_WPM = 205
+
+
+def _pacing_problems(scenes: list[dict[str, Any]]) -> list[str]:
+    """Narration must fit the scene durations at reference speaking pace."""
+    problems = []
+    words = sum(len(str(s.get("narration", "")).split()) for s in scenes)
+    secs = sum(float(s.get("duration_sec", 0)) for s in scenes) or 1.0
+    wpm = 60 * words / secs
+    if wpm > MAX_WPM:
+        problems.append(
+            f"Narration is {words} words over {secs:.1f} s = {wpm:.0f} wpm; the reference pace is ~{TARGET_WPM} wpm "
+            f"(max {MAX_WPM}). Either cut to ~{int(secs * TARGET_WPM / 60)} words or lengthen the scenes to "
+            f"~{words * 60 / TARGET_WPM:.0f} s total.")
+    for i, s in enumerate(scenes, start=1):
+        n = len(str(s.get("narration", "")).split())
+        d = float(s.get("duration_sec", 0)) or 0.1
+        if n / d > 4.6:  # > ~275 wpm inside one shot is unspeakable
+            problems.append(f"Scene {i}: {n} words in {d:.1f} s is too fast — split it or extend it to ≥{n / 3.1:.1f} s.")
+    return problems
+
+
+def _brand_in_narration(scenes: list[dict[str, Any]]) -> list[int]:
+    return [i for i, s in enumerate(scenes, start=1) if "stick knowledge" in str(s.get("narration", "")).lower()]
+
+
 async def _tool_update_storyboard(args: dict[str, Any], ctx: TurnContext) -> ToolOutput:
     plan = StoryboardIn.model_validate(args)
     sb = plan.model_dump()
+    problems = _pacing_problems(sb["scenes"])
+    branded = _brand_in_narration(sb["scenes"])
+    if branded:
+        problems.append(f"Scenes {branded} say the brand in the narration. The brand is only shown on objects "
+                        "(diegetic), never spoken — rewrite those lines.")
+    if problems:
+        raise ToolInputError("Storyboard NOT saved:\n- " + "\n- ".join(problems) + "\nFix and call update_storyboard again.")
     sb["fps"] = 30
     saved = await _save_storyboard(ctx, sb, list(range(1, len(sb["scenes"]) + 1)))
+    words = len(saved["full_narration"].split())
     return (
         f"Storyboard saved: \"{saved['title']}\" — {len(saved['scenes'])} scenes, "
-        f"{saved['total_duration_sec']} s total, branding in scene {saved['branding_placement'].get('scene_index')}."
+        f"{saved['total_duration_sec']} s total, {words} words "
+        f"(~{60 * words / max(saved['total_duration_sec'], 1):.0f} wpm), "
+        f"branding in scene {saved['branding_placement'].get('scene_index')}."
     )
 
 
@@ -500,6 +539,12 @@ async def _tool_patch_scenes(args: dict[str, Any], ctx: TurnContext) -> ToolOutp
     if req.branding_placement:
         sb["branding_placement"] = req.branding_placement.model_dump()
     sb["scenes"] = scenes
+    problems = _pacing_problems(scenes)
+    branded = _brand_in_narration(scenes)
+    if branded:
+        problems.append(f"Scenes {branded} say the brand in the narration; show it on an object instead.")
+    if problems:
+        raise ToolInputError("Patch NOT applied:\n- " + "\n- ".join(problems) + "\nAdjust and call patch_scenes again.")
     saved = await _save_storyboard(ctx, sb, affected)
     return (
         f"Applied {len(req.patches)} patch(es). Storyboard now has {len(saved['scenes'])} scenes, "

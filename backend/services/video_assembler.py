@@ -33,19 +33,20 @@ def build_ass_subtitles(
     words_per_chunk: int = 3,
 ) -> Path:
     """
-    Generates Zack D. Films-style ASS subtitles for 1080x1920 vertical Shorts:
-      - Bottom-center (16–18% above bottom edge -> MarginV = 325 on 1920px height = 16.9%)
-      - Bold clean sans-serif (Montserrat / Arial Bold fallback)
-      - Pure white text (&H00FFFFFF), crisp black outline (Outline=4.2), soft drop shadow (Shadow=2.4)
-      - 2–4 words per chunk synced 1:1 to ElevenLabs word-level timestamps
+    Generates Zack D. Films-style ASS subtitles for 1080x1920 vertical Shorts, matched to
+    the reference Shorts (measured 2026-11-25):
+      - Caption centre ~78 % down the frame (bottom of text ~1530 px -> MarginV 390)
+      - Heavy rounded sans (Montserrat ExtraBold / Arial Black / Arial Bold fallback),
+        ~80 px, pure white, thin dark edge + soft drop shadow (not a thick outline)
+      - 2–3 words per caption, never highlighted word-by-word, synced to word timestamps
     """
     words = timestamps_data.get("words", [])
     chunks: list[dict[str, Any]] = []
     i = 0
     while i < len(words):
-        # Adaptive 2-4 word chunking (break early on punctuation)
+        # Adaptive 2-3 word chunking (break early on punctuation)
         group = []
-        while i < len(words) and len(group) < max(2, min(4, words_per_chunk)):
+        while i < len(words) and len(group) < max(2, min(3, words_per_chunk)):
             w = words[i]
             group.append(w)
             i += 1
@@ -65,9 +66,9 @@ def build_ass_subtitles(
     win_fonts = Path(r"C:\Windows\Fonts")
     chosen_font = font_name
     if win_fonts.exists():
-        has_mont = any("montserrat" in p.name.lower() for p in win_fonts.glob("*.ttf"))
-        if not has_mont:
-            chosen_font = "Arial"
+        names = {p.name.lower() for p in win_fonts.glob("*.ttf")}
+        if not any("montserrat" in n for n in names):
+            chosen_font = "Arial Black" if "ariblk.ttf" in names else "Arial"
 
     header = f"""[Script Info]
 Title: Stick Knowledge 3D Studio Captions
@@ -79,7 +80,7 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ZDFCaption,{chosen_font},74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,4.2,2.4,2,70,70,325,1
+Style: ZDFCaption,{chosen_font},80,&H00FFFFFF,&H00FFFFFF,&H40101010,&H78000000,-1,0,0,0,100,100,0,0,1,2.2,3.5,2,70,70,390,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
