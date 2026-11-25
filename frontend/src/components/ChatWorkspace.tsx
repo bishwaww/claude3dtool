@@ -7,6 +7,7 @@ import { useStudioStore } from '../store/studioStore';
 import { MessageBubble, StreamingBubble } from './MessageBubble';
 import { ModelPicker, ThinkingToggle } from './ChatComposerControls';
 import { BlenderStatusBadge } from './LiveBlender';
+import { desktop } from '../desktop';
 
 const STARTER_PROMPTS = [
   'Make a 35s video on what happens if you swallow a tiny coin battery',
@@ -210,7 +211,7 @@ export const ChatWorkspace: React.FC = () => {
             <Mic className="w-3 h-3 text-violet-400" />
             Upload voiceover
           </button>
-          <BlenderStatusBadge />
+          {!desktop && <BlenderStatusBadge />}
           <span className="text-[11px] px-2.5 py-1 rounded-full bg-card border border-borderStrong text-inkMuted hidden 2xl:flex items-center gap-1.5">
             <Cpu className="w-3 h-3 text-studioCyan" />
             {engineLabel}

@@ -1,11 +1,14 @@
 @echo off
-title Stick Knowledge 3D Studio Launcher
-echo ====================================================
-echo   Stick Knowledge 3D Studio - Starting Services
-echo ====================================================
-start "Stick Knowledge Backend (8420)" cmd /k "cd /d "%~dp0backend" && .venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8420"
-timeout /t 2 /nobreak >nul
-start "Stick Knowledge Frontend (5173)" cmd /k "cd /d "%~dp0frontend" && npm.cmd run dev"
-timeout /t 3 /nobreak >nul
-start http://localhost:5173
-echo Studio launched at http://localhost:5173
+REM Start Stick Knowledge 3D Studio from the source checkout as a desktop app.
+REM (Installed users just open "Stick Knowledge 3D Studio" from the Start menu.)
+setlocal
+cd /d "%~dp0"
+if not exist frontend\dist\index.html (
+  echo Building the studio UI once...
+  pushd frontend & call npm ci & call npm run build & popd
+)
+if not exist desktop\node_modules\electron\dist\electron.exe (
+  echo Installing the desktop shell once...
+  pushd desktop & call npm ci & popd
+)
+start "" desktop\node_modules\electron\dist\electron.exe desktop

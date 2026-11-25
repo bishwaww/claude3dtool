@@ -14,6 +14,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useStudioStore } from '../store/studioStore';
+import { desktop } from '../desktop';
+import { UpdateButton } from './UpdateCenter';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -89,9 +91,7 @@ export const Sidebar: React.FC = () => {
       {/* Header */}
       <div className="px-4 py-3.5 flex items-center justify-between border-b border-borderSubtle">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-amber-600 flex items-center justify-center shadow-sm shrink-0">
-            <Box className="w-4 h-4 text-white" />
-          </div>
+          <img src="/logo.png" alt="Stick Knowledge" className="w-8 h-8 rounded-lg shadow-sm shrink-0" draggable={false} />
           <div className="min-w-0">
             <h1 className="text-sm font-semibold text-ink truncate leading-tight">
               Stick Knowledge
@@ -260,6 +260,11 @@ export const Sidebar: React.FC = () => {
           <Settings className="w-4 h-4" />
           Studio Settings
         </button>
+        {desktop && (
+          <div className="flex justify-center">
+            <UpdateButton />
+          </div>
+        )}
 
         <div className="pt-1.5 text-center text-[10px] text-inkDim">
           Assets via{' '}

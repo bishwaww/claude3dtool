@@ -6,17 +6,54 @@ import glob
 from pathlib import Path
 from typing import Optional
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-BACKEND_DIR = Path(__file__).resolve().parent
-DATA_DIR = BACKEND_DIR / "data"
+import sys
+
+# ------------------------------------------------------------------------------
+# Locations
+#   Source checkout : everything lives in the repo (ROOT_DIR).
+#   Packaged .exe   : code + read-only resources are inside the PyInstaller bundle
+#                     (sys._MEIPASS); user data (database, libraries) goes to
+#                     %APPDATA%\StickKnowledge3DStudio (Electron passes SK_DATA_DIR).
+# ------------------------------------------------------------------------------
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    BACKEND_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)).resolve()
+    ROOT_DIR = BACKEND_DIR  # blender_addon/, brand/ and frontend_dist/ are bundled next to the code
+else:
+    ROOT_DIR = Path(__file__).resolve().parent.parent
+    BACKEND_DIR = Path(__file__).resolve().parent
+
+# One user-data folder shared by the source checkout and the installed .exe, so settings,
+# API keys, projects and libraries are the same whichever way the studio is started.
+USER_DIR = Path(os.environ.get("SK_DATA_DIR") or Path(os.environ.get("APPDATA", str(Path.home()))) / "StickKnowledge3DStudio")
+DATA_DIR = USER_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _migrate_legacy_repo_data() -> None:
+    """First run after the move: copy the old in-repo database and libraries (never deletes)."""
+    if FROZEN:
+        return
+    legacy_db = BACKEND_DIR / "data" / "studio.db"
+    if legacy_db.is_file() and not (DATA_DIR / "studio.db").exists():
+        shutil.copy2(legacy_db, DATA_DIR / "studio.db")
+    legacy_lib = ROOT_DIR / "assets_library"
+    target_lib = USER_DIR / "assets_library"
+    if legacy_lib.is_dir() and not target_lib.exists():
+        shutil.copytree(legacy_lib, target_lib)
+
+
+_migrate_legacy_repo_data()
+FRONTEND_DIST = Path(os.environ.get("SK_FRONTEND_DIST") or (ROOT_DIR / ("frontend_dist" if FROZEN else "frontend/dist")))
+APP_VERSION = os.environ.get("SK_APP_VERSION", "dev")
 
 DB_PATH = DATA_DIR / "studio.db"
 SKILLS_DIR = BACKEND_DIR / "skills"  # every *.md here is loaded into the Claude system prompt (cached)
 ZDF_HELPERS_PATH = BACKEND_DIR / "blender_engine" / "zdf_helpers.py"
 ZDF_HELPERS_DOC_PATH = BACKEND_DIR / "blender_engine" / "zdf_helpers_api_doc.md"
 
-ASSETS_LIBRARY_DIR = ROOT_DIR / "assets_library"
+ASSETS_LIBRARY_DIR = USER_DIR / "assets_library"
+BRAND_LOGO_CANDIDATES = [ROOT_DIR / "brand" / "logo.png", ROOT_DIR / "desktop" / "assets" / "logo.png"]
 MIXAMO_LIBRARY_DIR = ASSETS_LIBRARY_DIR / "mixamo"
 CUSTOM_LIBRARY_DIR = ASSETS_LIBRARY_DIR / "custom"
 ANATOMY_LIBRARY_DIR = ASSETS_LIBRARY_DIR / "anatomy"

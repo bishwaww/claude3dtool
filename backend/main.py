@@ -778,6 +778,25 @@ async def api_get_final_video(project_id: str):
     return FileResponse(str(mp4), media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/app/info")
+async def api_app_info():
+    from config import APP_VERSION, DATA_DIR, FROZEN
+    return {"version": APP_VERSION, "packaged": FROZEN, "data_dir": str(DATA_DIR),
+            "mixamo_dir": str(MIXAMO_LIBRARY_DIR)}
+
+
+# ------------------------------------------------------------------------------
+# Built UI (desktop app / packaged .exe): the backend serves frontend/dist itself, so
+# Electron loads one local origin. Registered last so /api and /ws routes win.
+# ------------------------------------------------------------------------------
+from config import FRONTEND_DIST  # noqa: E402
+
+if (FRONTEND_DIST / "index.html").is_file():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="ui")
+
+
 if __name__ == "__main__":
     import uvicorn
 

@@ -5,6 +5,7 @@ import { ArtifactPanel } from './components/ArtifactPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { AssetLibraryModal } from './components/AssetLibraryModal';
 import { useStudioStore } from './store/studioStore';
+import { TitleBar } from './components/TitleBar';
 
 export const App: React.FC = () => {
   const { init, toast } = useStudioStore();
@@ -14,12 +15,15 @@ export const App: React.FC = () => {
   }, [init]);
 
   return (
-    <div className="h-screen w-screen flex bg-canvas text-ink overflow-hidden font-sans">
-      <Sidebar />
-      <main className="flex-1 flex min-w-0 h-full overflow-hidden">
-        <ChatWorkspace />
-        <ArtifactPanel />
-      </main>
+    <div className="h-screen w-screen flex flex-col bg-canvas text-ink overflow-hidden font-sans">
+      <TitleBar />
+      <div className="flex-1 flex min-h-0">
+        <Sidebar />
+        <main className="flex-1 flex min-w-0 h-full overflow-hidden">
+          <ChatWorkspace />
+          <ArtifactPanel />
+        </main>
+      </div>
 
       <SettingsModal />
       <AssetLibraryModal />

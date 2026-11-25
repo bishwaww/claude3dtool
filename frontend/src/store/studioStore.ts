@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
+import { desktop } from '../desktop';
 import type {
   AssetLibraryResponse,
   ChatMessage,
@@ -180,10 +181,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   pickTargetFolder: async () => {
     try {
-      const res = await api.pickFolder();
-      if (res.ok && res.path) {
-        set({ targetFolderInput: res.path });
-        await get().validateTargetFolder(res.path);
+      // Desktop app: native Windows folder dialog via Electron; browser: backend PowerShell dialog.
+      const path = desktop
+        ? await desktop.pickFolder({ title: 'Choose the output folder for this Short', defaultPath: get().targetFolderInput })
+        : (await api.pickFolder()).path;
+      if (path) {
+        set({ targetFolderInput: path });
+        await get().validateTargetFolder(path);
       }
     } catch (e: any) {
       get().showToast('error', `Folder picker error: ${e.message}`);

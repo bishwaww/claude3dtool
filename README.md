@@ -14,6 +14,16 @@ A local, Claude Desktop-inspired AI Chat & Automated 3D Explainer Production Sui
 4. Enter your **Target Output Folder** in the sidebar (e.g. `D:\Videos\StickKnowledge\Ep01`) and describe your 3D explainer Short in chat.
 5. Click **Launch & Connect Blender** in the chat header. Blender opens on `<target>/project.blend` and Claude builds the shots live, checking each one through the camera.
 
+## Desktop app, logo & updates
+
+- **Run from source:** double-click `start_studio.bat`. It opens the Electron desktop app, which starts the Python backend itself.
+- **Build the installer locally:** run `build_exe.bat`. The installer appears at `desktop\dist\StickKnowledge3DStudio-Setup-<version>.exe`. It installs per user, needs no admin rights, and creates Start-menu and desktop shortcuts.
+- **Your logo:** replace `desktop\assets\logo.png` (square PNG, ideally 1024 px), then run `backend\.venv\Scripts\python.exe scripts\apply_logo.py`. That regenerates `icon.ico` (exe, installer, taskbar), the window, splash and sidebar logos, and the favicon. Once the placeholder is replaced, the logo is also printed on the diegetic brand textures.
+- **Publish an update:** run `release_update.bat`. It bumps the version, commits, pushes `main` and pushes tag `vX.Y.Z`. GitHub Actions (`.github/workflows/release.yml`) then builds the installer and publishes a GitHub Release. Installed apps show **Update available** in the titlebar: Download, then Restart & install.
+  - electron-updater reads releases anonymously, so `bishwaww/claude3dtool` must be a **public** repository for auto-update.
+- **Source checkout:** the same Update button offers **Sync latest from GitHub**. It runs `git pull`, reinstalls changed dependencies, rebuilds the UI and restarts the backend.
+- **Data:** settings, API keys, projects and libraries live in `%APPDATA%\StickKnowledge3DStudio`, shared by the source checkout and the installed app. Uninstalling keeps them.
+
 ## Attachments, voiceover & characters
 
 - **Paperclip / drag-and-drop / paste** in the chat bar:

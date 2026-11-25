@@ -37,3 +37,6 @@ Thumbs.db
 assets_library/mixamo/*.fbx
 assets_library/mixamo/index.json
 assets_library/custom/
+
+# Build output
+build/

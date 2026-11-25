@@ -21,7 +21,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from config import ROOT_DIR
+from config import BRAND_LOGO_CANDIDATES, CUSTOM_LIBRARY_DIR
 
 BRAND_TEXT = "STICK KNOWLEDGE"
 BRAND_HANDLE = "@stickknowledge"
@@ -46,7 +46,11 @@ def find_user_logo(project_assets: Optional[Path] = None) -> Optional[Path]:
     cands = []
     if project_assets:
         cands += [project_assets / "custom" / "logo.png", project_assets / "branding" / "logo_source.png"]
-    cands += [ROOT_DIR / "desktop" / "assets" / "logo.png", ROOT_DIR / "assets_library" / "custom" / "logo.png"]
+    # The app logo (scripts/apply_logo.py) — unless it is still the shipped placeholder.
+    for app_logo in BRAND_LOGO_CANDIDATES:
+        if app_logo.is_file() and not (app_logo.parent / "logo.placeholder").exists():
+            cands.append(app_logo)
+    cands.append(CUSTOM_LIBRARY_DIR / "logo.png")
     return next((c for c in cands if c.is_file()), None)
 
 
