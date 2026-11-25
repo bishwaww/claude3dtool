@@ -7,6 +7,7 @@ REM    3. create + push tag vX.Y.Z  -> GitHub Actions builds the .exe and
 REM       publishes a GitHub Release; installed apps then offer the update.
 REM  Usage: release_update.bat            (patch)
 REM         release_update.bat minor      (or major)
+REM         release_update.bat 1.0.0      (exact version, e.g. the first release)
 REM ==========================================================================
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -30,14 +31,21 @@ if errorlevel 1 (
 git pull --ff-only origin main || exit /b 1
 
 pushd desktop
-call npm version %BUMP% --no-git-tag-version || (popd & exit /b 1)
+call npm version %BUMP% --no-git-tag-version --allow-same-version || (popd & exit /b 1)
 for /f "delims=" %%v in ('node -p "require('./package.json').version"') do set "VER=%%v"
 popd
 
 echo.
 echo Releasing v%VER% ...
+git rev-parse -q --verify "refs/tags/v%VER%" >nul && (
+  echo Tag v%VER% already exists. Pick a newer version.
+  exit /b 1
+)
 git add desktop\package.json desktop\package-lock.json
-git commit -m "Release v%VER%" || exit /b 1
+git diff --cached --quiet
+if errorlevel 1 (
+  git commit -m "Release v%VER%" || exit /b 1
+)
 git push origin main || exit /b 1
 git tag -a "v%VER%" -m "Stick Knowledge 3D Studio v%VER%" || exit /b 1
 git push origin "v%VER%" || exit /b 1
