@@ -1,15 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Send,
-  Sparkles,
-  Loader2,
-  Cpu,
-  Volume2,
-  Folder,
-  Wand2,
-} from 'lucide-react';
+import { ArrowUp, Sparkles, Square, Cpu, Volume2, Folder, Wand2 } from 'lucide-react';
 import { api } from '../api/client';
 import { useStudioStore } from '../store/studioStore';
+import { MessageBubble, StreamingBubble } from './MessageBubble';
+import { ModelPicker, ThinkingToggle } from './ChatComposerControls';
 
 const STARTER_PROMPTS = [
   'Make a 35s video on what happens if you swallow a tiny coin battery',
@@ -24,6 +18,8 @@ export const ChatWorkspace: React.FC = () => {
     messages,
     isSendingChat,
     sendPrompt,
+    stopStreaming,
+    streaming,
     settings,
     mediaVersion,
     targetFolderInput,
@@ -33,8 +29,8 @@ export const ChatWorkspace: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isSendingChat]);
+    bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' });
+  }, [messages, isSendingChat, streaming?.text, streaming?.tools.length]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -126,56 +122,11 @@ export const ChatWorkspace: React.FC = () => {
           </div>
         ) : (
           <div className="max-w-2xl mx-auto space-y-5">
-            {messages.map((m) => {
-              const isUser = m.role === 'user';
-              return (
-                <div
-                  key={m.id}
-                  className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                      isUser
-                        ? 'bg-card border border-borderStrong text-ink'
-                        : 'bg-transparent text-ink'
-                    }`}
-                  >
-                    {!isUser && (
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="w-5 h-5 rounded-md bg-accent/20 text-accent flex items-center justify-center text-[10px] font-bold">
-                          SK
-                        </span>
-                        <span className="text-xs font-semibold text-ink">Claude 3D Director</span>
-                      </div>
-                    )}
-                    <div className="whitespace-pre-wrap">{m.content}</div>
-                    {!isUser && m.metadata?.usage && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] font-mono text-inkDim">
-                        <span className="px-2 py-0.5 rounded bg-card border border-borderSubtle">
-                          in: {m.metadata.usage.input_tokens}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-card border border-borderSubtle text-emerald-400/90">
-                          cache hit: {m.metadata.usage.cache_read_tokens}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-card border border-borderSubtle">
-                          out: {m.metadata.usage.output_tokens}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-accent/15 text-accent">
-                          ${m.metadata.usage.cost_usd.toFixed(4)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {messages.map((m) => (
+              <MessageBubble key={m.id} message={m} />
+            ))}
 
-            {isSendingChat && (
-              <div className="flex items-center gap-2.5 text-xs text-inkMuted px-2">
-                <Loader2 className="w-4 h-4 animate-spin text-accent" />
-                Claude Director is crafting scenes & 3D shot choreography (Prompt Cache active)...
-              </div>
-            )}
+            {streaming && <StreamingBubble {...streaming} />}
             <div ref={bottomRef} />
           </div>
         )}
@@ -199,22 +150,32 @@ export const ChatWorkspace: React.FC = () => {
             }
             className="w-full bg-transparent resize-none px-2 py-1 text-sm text-ink placeholder:text-inkDim focus:outline-none"
           />
-          <div className="flex items-center justify-between pt-1.5 px-1">
-            <span className="text-[11px] text-inkDim font-mono truncate">
-              {settings?.claude_model || 'claude-sonnet-4-5'} · Prompt Cached
-            </span>
-            <button
-              type="submit"
-              disabled={!input.trim() || isSendingChat}
-              className="px-3.5 py-1.5 rounded-xl bg-accent hover:bg-accentHover disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1.5 transition-colors"
-            >
+          <div className="flex items-center justify-between pt-1.5 px-1 gap-2">
+            <div className="flex items-center gap-1 min-w-0">
+              <ThinkingToggle />
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <ModelPicker />
               {isSendingChat ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <button
+                  type="button"
+                  onClick={stopStreaming}
+                  title="Stop"
+                  className="w-8 h-8 rounded-lg bg-ink/90 hover:bg-ink text-canvas flex items-center justify-center transition-colors"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                </button>
               ) : (
-                <Send className="w-3.5 h-3.5" />
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  title="Send (Enter)"
+                  className="w-8 h-8 rounded-lg bg-accent hover:bg-accentHover disabled:opacity-40 text-white flex items-center justify-center transition-colors"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
               )}
-              Send
-            </button>
+            </div>
           </div>
         </form>
       </div>

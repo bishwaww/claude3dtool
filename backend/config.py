@@ -34,75 +34,85 @@ for _d in (
     _d.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_BLENDERKIT_SOURCE = r"D:\B Software LK\blender.crt\blenderkit"
-DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
 DEFAULT_RENDER_ENGINE = "EEVEE_NEXT"  # "EEVEE_NEXT" or "CYCLES_OPTIX"
 DEFAULT_BUDGET_USD = 100.0
 
-CLAUDE_MODELS = [
-    {
-        "id": "claude-sonnet-5-5",
-        "label": "Claude Sonnet 5.5 (Latest — Recommended)",
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_write_per_mtok": 3.75,
-        "cache_read_per_mtok": 0.30,
-    },
-    {
-        "id": "claude-sonnet-5",
-        "label": "Claude Sonnet 5",
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_write_per_mtok": 3.75,
-        "cache_read_per_mtok": 0.30,
-    },
-    {
-        "id": "claude-sonnet-4-6",
-        "label": "Claude Sonnet 4.6",
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_write_per_mtok": 3.75,
-        "cache_read_per_mtok": 0.30,
-    },
-    {
-        "id": "claude-haiku-5-5",
-        "label": "Claude Haiku 5.5 (Fast & Low Cost)",
-        "input_per_mtok": 0.80,
-        "output_per_mtok": 4.00,
-        "cache_write_per_mtok": 1.00,
-        "cache_read_per_mtok": 0.08,
-    },
-    {
-        "id": "claude-haiku-4-5-20251001",
-        "label": "Claude Haiku 4.5 (Ultra Low Cost)",
-        "input_per_mtok": 0.80,
-        "output_per_mtok": 4.00,
-        "cache_write_per_mtok": 1.00,
-        "cache_read_per_mtok": 0.08,
-    },
-    {
-        "id": "claude-opus-5-5",
-        "label": "Claude Opus 5.5 (Maximum Quality)",
-        "input_per_mtok": 15.00,
-        "output_per_mtok": 75.00,
-        "cache_write_per_mtok": 18.75,
-        "cache_read_per_mtok": 1.50,
-    },
+# ------------------------------------------------------------------------------
+# Claude model pricing (USD per million tokens, Anthropic first-party API).
+# The live model LIST comes from GET /v1/models (see services/model_catalog.py);
+# this table only supplies prices + an offline fallback list. Prices are matched
+# by longest id prefix so dated snapshots (e.g. claude-haiku-4-5-20251001) resolve.
+# cache_write = 5-minute ephemeral write (1.25x input).
+# ------------------------------------------------------------------------------
+def _price(inp: float, out: float, cache_read: Optional[float] = None) -> dict:
+    return {
+        "input_per_mtok": inp,
+        "output_per_mtok": out,
+        "cache_write_per_mtok": round(inp * 1.25, 4),
+        "cache_read_per_mtok": cache_read if cache_read is not None else round(inp * 0.1, 4),
+    }
+
+
+MODEL_PRICING: dict[str, dict] = {
+    "claude-fable-5-2": _price(8.00, 40.00, 0.20),
+    "claude-mythos-5-2": _price(8.00, 40.00, 0.20),
+    "claude-fable-5-1": _price(10.00, 50.00),
+    "claude-mythos-5-1": _price(10.00, 50.00),
+    "claude-fable-5": _price(10.00, 50.00),
+    "claude-opus-5-5": _price(4.00, 20.00, 0.20),
+    "claude-opus-5": _price(5.00, 25.00),
+    "claude-opus-4-8": _price(5.00, 25.00),
+    "claude-opus-4-7": _price(5.00, 25.00),
+    "claude-opus-4-6": _price(5.00, 25.00),
+    "claude-opus-4-5": _price(5.00, 25.00),
+    "claude-opus-4-1": _price(15.00, 75.00),
+    "claude-opus-4": _price(15.00, 75.00),
+    "claude-sonnet-5-5": _price(2.00, 10.00, 0.10),
+    "claude-sonnet-5": _price(2.00, 10.00),
+    "claude-sonnet-4": _price(3.00, 15.00),  # 4, 4.5, 4.6
+    "claude-haiku-5-5": _price(0.10, 0.50),
+    "claude-haiku-4-5": _price(1.00, 5.00),
+    "claude-3-5-haiku": _price(0.80, 4.00),
+    "claude-3": _price(3.00, 15.00),
+}
+
+# Offline fallback list (used only when GET /v1/models is unreachable).
+FALLBACK_MODELS: list[dict] = [
+    {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"},
+    {"id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"},
+    {"id": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5"},
+    {"id": "claude-fable-5-2", "display_name": "Claude Fable 5.2"},
+    {"id": "claude-opus-5", "display_name": "Claude Opus 5"},
+    {"id": "claude-sonnet-5", "display_name": "Claude Sonnet 5"},
+    {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8"},
+    {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
+    {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
 ]
 
 
 def get_model_pricing(model_id: str) -> dict:
-    for m in CLAUDE_MODELS:
-        if m["id"] == model_id:
-            return m
-    # Sensible default (Sonnet tier)
+    best = ""
+    for prefix in MODEL_PRICING:
+        if model_id.startswith(prefix) and len(prefix) > len(best):
+            best = prefix
+    price = MODEL_PRICING.get(best) or _price(3.00, 15.00)  # unknown → Sonnet-tier estimate
+    return {"id": model_id, **price}
+
+
+def decorate_model(m: dict) -> dict:
+    """Attach pricing + a UI label to a model entry from /v1/models or the fallback list."""
+    price = get_model_pricing(m["id"])
+    name = m.get("display_name") or m["id"]
     return {
-        "id": model_id,
-        "label": model_id,
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_write_per_mtok": 3.75,
-        "cache_read_per_mtok": 0.30,
+        **m,
+        **price,
+        "label": f"{name}  ·  ${price['input_per_mtok']:g}/${price['output_per_mtok']:g} per MTok",
     }
+
+
+# Back-compat for code that still imports CLAUDE_MODELS.
+CLAUDE_MODELS = [decorate_model(m) for m in FALLBACK_MODELS]
 
 
 def detect_blender_executable() -> str:

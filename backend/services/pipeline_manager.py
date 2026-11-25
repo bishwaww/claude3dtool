@@ -535,7 +535,7 @@ class PipelineManager:
         for s in scenes:
             idx = int(s["scene_index"])
             script_file = paths["scripts"] / f"scene_{idx:02d}.py"
-            needs_gen = regenerate_scripts or (not script_file.is_file()) or (
+            needs_gen = regenerate_scripts or (not script_file.is_file()) or bool(s.get("script_stale")) or (
                 scene_indices is not None and idx in target_indices
             )
             if needs_gen:
@@ -557,6 +557,7 @@ class PipelineManager:
                     await self._log(project_id, "claude", f"No Claude API key set; writing built-in zdf_helpers template for scene_{idx:02d}.py")
                     code = generate_fallback_scene_script(s, sb.get("branding_placement", {}))
                 script_file.write_text(code, encoding="utf-8")
+                s["script_stale"] = False
             s["script_file"] = str(script_file)
 
         # 4. Write master_build.py and execute Headless Blender (with 1-retry Claude self-heal!)

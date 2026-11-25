@@ -2,11 +2,14 @@ import type {
   AssetLibraryResponse,
   BlenderKitStatus,
   ChatMessage,
+  ChatStreamEvent,
   ClaudeModelOption,
   ElevenLabsVoice,
+  ModelsResponse,
   Project,
   Settings,
   StoryboardPlan,
+  ThinkingEffort,
   TokenUsageSummary,
 } from '../types';
 
@@ -96,17 +99,52 @@ export const api = {
     }),
   deleteProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 
-  sendChat: (projectId: string, message: string) =>
-    req<{
-      project: Project;
-      user_message: ChatMessage;
-      assistant_message: ChatMessage;
-      affected_scenes: number[];
-      usage: TokenUsageSummary;
-    }>(`/api/projects/${projectId}/chat`, {
+  listModels: (refresh = false) => req<ModelsResponse>(`/api/models${refresh ? '?refresh=true' : ''}`),
+
+  /** Streams one Claude turn (Server-Sent Events over a POST response body). */
+  streamChat: async (
+    projectId: string,
+    body: { message: string; model?: string; thinking?: boolean; effort?: ThinkingEffort },
+    onEvent: (evt: ChatStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${BASE}/api/projects/${projectId}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ message }),
-    }),
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        detail = data.detail || detail;
+      } catch {
+        // ignore
+      }
+      throw new Error(detail);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+        if (!line) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent);
+        } catch {
+          // A malformed SSE frame is skipped; the turn continues.
+        }
+      }
+    }
+  },
 
   generateVoiceover: (projectId: string) =>
     req<{ project: Project; timestamps: any }>(`/api/projects/${projectId}/generate-voiceover`, {

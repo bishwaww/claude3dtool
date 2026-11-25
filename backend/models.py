@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 
 class SettingsPayload(BaseModel):
     anthropic_api_key: str = ""
-    claude_model: str = "claude-sonnet-5-5"
+    claude_model: str = "claude-opus-5-5"
+    extended_thinking: bool = True
+    thinking_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"  # Adam default
     elevenlabs_voice_name: str = "Adam (Default)"
@@ -56,6 +58,7 @@ class SceneSpec(BaseModel):
     branding_note: str = ""
     assets: list[AssetRequirement] = Field(default_factory=list)
     script_file: Optional[str] = None
+    script_stale: bool = False
     preview_path: Optional[str] = None
     render_status: Literal["idle", "building", "preview_ready", "rendered", "error"] = "idle"
 
@@ -106,6 +109,9 @@ class UpdateProjectRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    model: Optional[str] = None  # per-message model override from the chat-bar switcher
+    thinking: Optional[bool] = None
+    effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
     auto_generate_voice: bool = False
     auto_build_blend: bool = False
 

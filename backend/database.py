@@ -82,6 +82,8 @@ def init_db() -> None:
 DEFAULT_SETTINGS: dict[str, Any] = {
     "anthropic_api_key": "",
     "claude_model": DEFAULT_CLAUDE_MODEL,
+    "extended_thinking": True,
+    "thinking_effort": "high",
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "pNInz6obpgDQGcFmaJgB",
     "elevenlabs_voice_name": "Adam (Default)",

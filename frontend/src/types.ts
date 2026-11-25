@@ -1,6 +1,8 @@
 export interface Settings {
   anthropic_api_key: string;
   claude_model: string;
+  extended_thinking: boolean;
+  thinking_effort: ThinkingEffort;
   elevenlabs_api_key: string;
   elevenlabs_voice_id: string;
   elevenlabs_voice_name: string;
@@ -13,13 +15,50 @@ export interface Settings {
   budget_limit_usd: number;
 }
 
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface ClaudeModelOption {
   id: string;
+  display_name?: string;
   label: string;
+  created_at?: string;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
   input_per_mtok: number;
   output_per_mtok: number;
+  cache_write_per_mtok?: number;
   cache_read_per_mtok: number;
 }
+
+export interface ModelsResponse {
+  models: ClaudeModelOption[];
+  source: 'live' | 'fallback';
+  error: string | null;
+}
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  label?: string;
+  ok?: boolean;
+  summary?: string;
+  running?: boolean;
+}
+
+/** Server-Sent Event payloads streamed by POST /api/projects/{id}/chat */
+export type ChatStreamEvent =
+  | { type: 'user_message'; message: ChatMessage }
+  | { type: 'assistant_start'; model: string; thinking: boolean }
+  | { type: 'thinking_start' }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'text_delta'; text: string }
+  | { type: 'text_block_end' }
+  | { type: 'tool_start'; id: string; name: string; label: string }
+  | { type: 'tool_result'; id: string; name: string; ok: boolean; summary: string }
+  | { type: 'notice'; text: string }
+  | { type: 'project_updated'; project: Project }
+  | { type: 'done'; assistant_message: ChatMessage; project: Project; usage: TokenUsageSummary }
+  | { type: 'error'; message: string; assistant_message: ChatMessage };
 
 export interface ElevenLabsVoice {
   voice_id: string;
@@ -100,6 +139,10 @@ export interface ChatMessage {
   metadata?: {
     affected_scenes?: number[];
     usage?: TokenUsageEntry;
+    tool_calls?: ToolCallInfo[];
+    thinking?: string;
+    model?: string;
+    error?: boolean;
   };
   created_at: string;
 }

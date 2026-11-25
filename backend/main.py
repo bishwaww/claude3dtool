@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 # Ensure backend directory is on sys.path regardless of launch CWD
 _BACKEND_DIR = Path(__file__).resolve().parent
@@ -53,8 +53,9 @@ from models import (
     VoicePreviewRequest,
 )
 from services.asset_manager import AssetManager
-from services.claude_director import ClaudeDirector
+from services.claude_director import normalize_storyboard, run_chat_turn
 from services.elevenlabs_service import ElevenLabsService
+from services.model_catalog import list_models
 from services.pipeline_manager import (
     PipelineManager,
     ensure_project_folder_structure,
@@ -155,6 +156,13 @@ async def api_get_settings():
 async def api_update_settings(payload: SettingsPayload):
     saved = save_settings(payload.model_dump())
     return {"ok": True, "settings": saved}
+
+
+@app.get("/api/models")
+async def api_list_models(refresh: bool = False):
+    """Every Claude model available to the configured API key (GET /v1/models), with pricing."""
+    s = get_settings()
+    return await list_models((s.get("anthropic_api_key") or "").strip(), force=refresh)
 
 
 @app.post("/api/system/detect-blender")
@@ -319,6 +327,9 @@ async def api_get_project(project_id: str):
 @app.put("/api/projects/{project_id}")
 async def api_update_project(project_id: str, req: UpdateProjectRequest):
     sb_dict = req.storyboard.model_dump() if req.storyboard else None
+    if sb_dict is not None:
+        existing = get_project(project_id)
+        sb_dict = normalize_storyboard(sb_dict, (existing or {}).get("storyboard") or {})
     if req.target_folder:
         ensure_project_folder_structure(req.target_folder)
     updated = update_project(
@@ -347,56 +358,79 @@ async def api_project_chat(project_id: str, req: ChatRequest):
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found.")
 
+    """
+    Streams one Claude turn as Server-Sent Events (text/event-stream). Each event is
+    `data: {json}\\n\\n` with a `type` of: user_message, assistant_start, thinking_start,
+    thinking_delta, text_delta, text_block_end, tool_start, tool_result, notice,
+    project_updated, done, error.
+    """
     user_msg = add_message(project_id, "user", req.message)
-    await hub.broadcast(project_id, {"type": "log", "stage": "claude", "message": f"Director prompt: {req.message}"})
+    if not proj.get("topic"):
+        update_project(project_id, topic=req.message[:140])
+    await hub.broadcast(project_id, {"type": "log", "stage": "claude", "message": f"Director prompt: {req.message[:200]}"})
 
-    try:
-        director = ClaudeDirector()
-        existing_sb = proj.get("storyboard") if proj.get("storyboard", {}).get("scenes") else None
-        sb, reply, usage = await asyncio.to_thread(
-            director.create_or_update_director_plan,
-            project_id=project_id,
-            user_message=req.message,
-            existing_storyboard=existing_sb,
-        )
-    except Exception as e:
-        err_msg = add_message(project_id, "assistant", f"Error communicating with Claude Director: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
-    affected = sb.pop("affected_scenes", [])
-    new_name = proj["name"]
-    if new_name.startswith("Untitled") or not existing_sb:
-        new_name = sb.get("title") or proj["name"]
+    async def emit(evt: dict[str, Any]) -> None:
+        await queue.put(evt)
+        if evt.get("type") == "project_updated":
+            await hub.broadcast(project_id, evt)
 
-    updated = update_project(
-        project_id,
-        name=new_name,
-        topic=proj["topic"] or req.message[:140],
-        storyboard=sb,
-        status="planned",
+    async def agent() -> None:
+        await emit({"type": "user_message", "message": user_msg})
+        try:
+            result = await run_chat_turn(
+                project_id=project_id,
+                user_content=req.message,
+                emit=emit,
+                model=req.model,
+                thinking=req.thinking,
+                effort=req.effort,
+            )
+            assistant_msg = add_message(
+                project_id,
+                "assistant",
+                result.text or "_(no text reply)_",
+                metadata={
+                    "affected_scenes": result.affected_scenes,
+                    "usage": result.usage,
+                    "tool_calls": result.tool_calls,
+                    "thinking": result.thinking[:20000],
+                    "model": result.model,
+                    "stop_reason": result.stop_reason,
+                },
+            )
+            usage_summary = get_token_usage_summary(project_id)
+            await hub.broadcast(project_id, {"type": "usage_updated", "usage": usage_summary})
+            await emit({
+                "type": "done",
+                "assistant_message": assistant_msg,
+                "project": get_project(project_id),
+                "usage": usage_summary,
+            })
+        except Exception as e:  # API/auth/network errors surface in chat, never as a crash
+            detail = getattr(e, "message", None) or str(e)
+            err = add_message(project_id, "assistant", f"⚠️ Claude request failed: {detail}",
+                              metadata={"error": True})
+            await emit({"type": "error", "message": detail, "assistant_message": err})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(agent())
+
+    async def sse():
+        while True:
+            evt = await queue.get()
+            if evt is None:
+                break
+            yield f"data: {json.dumps(evt, ensure_ascii=False, default=str)}\n\n"
+        await task
+
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-    save_project_meta_file(updated)  # type: ignore
-
-    assistant_msg = add_message(
-        project_id,
-        "assistant",
-        reply,
-        metadata={
-            "affected_scenes": affected,
-            "usage": usage,
-        },
-    )
-    usage_summary = get_token_usage_summary(project_id)
-    await hub.broadcast(project_id, {"type": "usage_updated", "usage": usage_summary})
-    await hub.broadcast(project_id, {"type": "project_updated", "project": updated})
-
-    return {
-        "project": updated,
-        "user_message": user_msg,
-        "assistant_message": assistant_msg,
-        "affected_scenes": affected,
-        "usage": usage_summary,
-    }
 
 
 # ==============================================================================

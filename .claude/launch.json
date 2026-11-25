@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "D:\\3D Short Tool\\backend\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8420", "--app-dir", "D:\\3D Short Tool\\backend"],
+      "port": 8420,
+      "url": "http://127.0.0.1:8420"
+    },
+    {
+      "name": "studio-ui",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": ["--prefix", "D:\\3D Short Tool\\frontend", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

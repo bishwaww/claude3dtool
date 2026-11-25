@@ -9,10 +9,22 @@ import type {
   Project,
   Settings,
   StoryboardPlan,
+  ThinkingEffort,
   TokenUsageSummary,
+  ToolCallInfo,
 } from '../types';
 
 export type ArtifactTab = 'storyboard' | 'previews' | 'console';
+
+/** The assistant reply currently being streamed (Claude Desktop-style live bubble). */
+export interface StreamingReply {
+  model: string;
+  text: string;
+  thinking: string;
+  isThinking: boolean;
+  tools: ToolCallInfo[];
+  notices: string[];
+}
 
 interface StudioState {
   projects: Project[];
@@ -22,6 +34,10 @@ interface StudioState {
   usage: TokenUsageSummary | null;
   settings: Settings | null;
   models: ClaudeModelOption[];
+  modelsSource: 'live' | 'fallback';
+  modelsError: string | null;
+  streaming: StreamingReply | null;
+  chatAbort: AbortController | null;
   ffmpegPath: string;
   assetLibrary: AssetLibraryResponse | null;
 
@@ -60,6 +76,10 @@ interface StudioState {
   deleteProject: (projectId: string) => Promise<void>;
   saveStoryboardEdits: (storyboard: StoryboardPlan) => Promise<void>;
   sendPrompt: (message: string) => Promise<void>;
+  stopStreaming: () => void;
+  refreshModels: (force?: boolean) => Promise<void>;
+  setChatModel: (modelId: string) => Promise<void>;
+  setChatThinking: (enabled: boolean, effort?: ThinkingEffort) => Promise<void>;
   generateVoiceover: () => Promise<void>;
   buildBlendProject: (opts?: { regenerateScripts?: boolean; sceneIndices?: number[] }) => Promise<void>;
   rerenderScene: (sceneIndex: number, regenerateScript?: boolean) => Promise<void>;
@@ -80,6 +100,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   usage: null,
   settings: null,
   models: [],
+  modelsSource: 'fallback',
+  modelsError: null,
+  streaming: null,
+  chatAbort: null,
   ffmpegPath: '',
   assetLibrary: null,
 
@@ -169,11 +193,49 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         await get().validateTargetFolder(get().targetFolderInput);
       }
 
-      // Load asset library & BlenderKit status in background
+      // Live Claude model list (GET /v1/models) + asset library in background
+      get().refreshModels();
       api.getAssetLibrary().then((lib) => set({ assetLibrary: lib })).catch(() => {});
     } catch (e: any) {
       get().showToast('error', `Backend connection failed: ${e.message}`);
     }
+  },
+
+  refreshModels: async (force = false) => {
+    try {
+      const res = await api.listModels(force);
+      set({ models: res.models, modelsSource: res.source, modelsError: res.error });
+    } catch (e: any) {
+      set({ modelsError: e.message });
+    }
+  },
+
+  setChatModel: async (modelId) => {
+    const s = get().settings;
+    if (!s || s.claude_model === modelId) return;
+    const next = { ...s, claude_model: modelId };
+    set({ settings: next });
+    try {
+      await api.saveSettings(next);
+    } catch (e: any) {
+      get().showToast('error', `Could not save model choice: ${e.message}`);
+    }
+  },
+
+  setChatThinking: async (enabled, effort) => {
+    const s = get().settings;
+    if (!s) return;
+    const next = { ...s, extended_thinking: enabled, thinking_effort: effort ?? s.thinking_effort ?? 'high' };
+    set({ settings: next });
+    try {
+      await api.saveSettings(next);
+    } catch (e: any) {
+      get().showToast('error', `Could not save thinking setting: ${e.message}`);
+    }
+  },
+
+  stopStreaming: () => {
+    get().chatAbort?.abort();
   },
 
   refreshAssetLibrary: async () => {
@@ -335,25 +397,101 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       content: trimmed,
       created_at: new Date().toISOString(),
     };
-    set((s) => ({ isSendingChat: true, messages: [...s.messages, optimisticUser] }));
+    const settings = get().settings;
+    const abort = new AbortController();
+    set((s) => ({
+      isSendingChat: true,
+      chatAbort: abort,
+      messages: [...s.messages, optimisticUser],
+      streaming: {
+        model: settings?.claude_model || '',
+        text: '',
+        thinking: '',
+        isThinking: false,
+        tools: [],
+        notices: [],
+      },
+    }));
+
+    const patchStream = (fn: (r: StreamingReply) => StreamingReply) =>
+      set((s) => (s.streaming ? { streaming: fn(s.streaming) } : {}));
+
+    const applyProject = (project: Project) =>
+      set((s) => ({
+        activeProject: project,
+        projects: s.projects.map((p) => (p.id === project.id ? project : p)),
+      }));
 
     try {
-      const res = await api.sendChat(active.id, trimmed);
-      set((s) => ({
-        isSendingChat: false,
-        activeProject: res.project,
-        projects: s.projects.map((p) => (p.id === res.project.id ? res.project : p)),
-        messages: [
-          ...s.messages.filter((m) => m.id !== optimisticUser.id),
-          res.user_message,
-          res.assistant_message,
-        ],
-        usage: res.usage,
-        artifactTab: 'storyboard',
-      }));
+      await api.streamChat(
+        active.id,
+        {
+          message: trimmed,
+          model: settings?.claude_model,
+          thinking: settings?.extended_thinking ?? true,
+          effort: settings?.thinking_effort ?? 'high',
+        },
+        (evt) => {
+          switch (evt.type) {
+            case 'user_message':
+              set((s) => ({
+                messages: s.messages.map((m) => (m.id === optimisticUser.id ? evt.message : m)),
+              }));
+              break;
+            case 'assistant_start':
+              patchStream((r) => ({ ...r, model: evt.model }));
+              break;
+            case 'thinking_start':
+              patchStream((r) => ({ ...r, isThinking: true }));
+              break;
+            case 'thinking_delta':
+              patchStream((r) => ({ ...r, isThinking: true, thinking: r.thinking + evt.text }));
+              break;
+            case 'text_delta':
+              patchStream((r) => ({ ...r, isThinking: false, text: r.text + evt.text }));
+              break;
+            case 'text_block_end':
+              patchStream((r) => ({ ...r, text: r.text.endsWith('\n\n') ? r.text : r.text + '\n\n' }));
+              break;
+            case 'tool_start':
+              patchStream((r) => ({
+                ...r,
+                isThinking: false,
+                tools: [...r.tools, { id: evt.id, name: evt.name, label: evt.label, running: true }],
+              }));
+              break;
+            case 'tool_result':
+              patchStream((r) => ({
+                ...r,
+                tools: r.tools.map((t) =>
+                  t.id === evt.id ? { ...t, running: false, ok: evt.ok, summary: evt.summary } : t
+                ),
+              }));
+              break;
+            case 'notice':
+              patchStream((r) => ({ ...r, notices: [...r.notices, evt.text] }));
+              break;
+            case 'project_updated':
+              applyProject(evt.project);
+              set({ artifactTab: 'storyboard' });
+              break;
+            case 'done':
+              applyProject(evt.project);
+              set((s) => ({ messages: [...s.messages, evt.assistant_message], usage: evt.usage }));
+              break;
+            case 'error':
+              set((s) => ({ messages: [...s.messages, evt.assistant_message] }));
+              get().showToast('error', evt.message);
+              break;
+          }
+        },
+        abort.signal
+      );
     } catch (e: any) {
-      set({ isSendingChat: false });
-      get().showToast('error', e.message);
+      if (e?.name !== 'AbortError') get().showToast('error', e.message);
+      else get().showToast('info', 'Stopped watching this reply. It finishes in the background and appears when you reopen the project.');
+    } finally {
+      set({ isSendingChat: false, streaming: null, chatAbort: null });
     }
   },
 
