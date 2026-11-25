@@ -7,11 +7,21 @@ A local, Claude Desktop-inspired AI Chat & Automated 3D Explainer Production Sui
 1. Double-click `start_studio.bat` (or run `.\start_studio.ps1`).
 2. Open **http://localhost:5173**.
 3. Open **Studio Settings** in the bottom-left sidebar:
-   - Enter your **Anthropic Claude API Key** and choose your model (default: `claude-sonnet-4-5`).
+   - Enter your **Anthropic Claude API Key**. Every model on your key appears in the chat bar's model picker.
    - Enter your **ElevenLabs API Key** and select/preview a narrator voice.
-   - Verify your auto-detected **Blender** executable (`D:\B Software LK\blender.exe`) and click **Install/Sync BlenderKit into Blender** (`D:\B Software LK\blender.crt\blenderkit`).
+   - Verify your auto-detected **Blender** executable (`D:\B Software LK\blender.exe`).
    - Choose `EEVEE Next (Fast)` or `Cycles GPU OptiX (Cinematic)`.
 4. Enter your **Target Output Folder** in the sidebar (e.g. `D:\Videos\StickKnowledge\Ep01`) and describe your 3D explainer Short in chat.
+5. Click **Launch & Connect Blender** in the chat header. Blender opens on `<target>/project.blend` and Claude builds the shots live, checking each one through the camera.
+
+## Live Blender bridge
+
+`blender_addon/stick_knowledge_bridge` is a Blender add-on that serves JSON-RPC on `127.0.0.1:9876` (next free port up to 9881; the port and a session token are written to `%TEMP%\stick_knowledge_bridge.json`). Socket I/O runs on a background thread; every `bpy` call runs on Blender's main thread through a timer, so the UI never freezes.
+
+- **Launch & Connect** copies the add-on (and BlenderKit from `D:\B Software LK\blender.crt\blenderkit`) into Blender's user add-ons folder, enables both, then opens Blender with `blender_addon/launch_project.py`.
+- Commands: `ping`, `get_scene_info`, `execute_python`, `import_asset`, `capture_viewport`, `save_project`, `open_project`, `init_studio`, `render_animation`, `render_status`, `reload_helpers`.
+- Claude's tools: `blender_get_scene_info`, `blender_execute_python`, `blender_capture_viewport` (the image goes to Claude's vision and the Live Blender tab), `blender_import_asset`, `blender_save_project`.
+- The add-on also has a sidebar panel in the 3D View (N → Stick Knowledge) to start or stop the bridge.
 
 ## Project Output Folder Structure
 

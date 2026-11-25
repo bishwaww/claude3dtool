@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useStudioStore } from '../store/studioStore';
 import { MessageBubble, StreamingBubble } from './MessageBubble';
 import { ModelPicker, ThinkingToggle } from './ChatComposerControls';
+import { BlenderStatusBadge } from './LiveBlender';
 
 const STARTER_PROMPTS = [
   'Make a 35s video on what happens if you swallow a tiny coin battery',
@@ -68,7 +69,8 @@ export const ChatWorkspace: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[11px] px-2.5 py-1 rounded-full bg-card border border-borderStrong text-inkMuted flex items-center gap-1.5">
+          <BlenderStatusBadge />
+          <span className="text-[11px] px-2.5 py-1 rounded-full bg-card border border-borderStrong text-inkMuted hidden 2xl:flex items-center gap-1.5">
             <Cpu className="w-3 h-3 text-studioCyan" />
             {engineLabel}
           </span>

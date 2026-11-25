@@ -110,6 +110,13 @@ How to behave
 - After a tool call succeeds, give a short summary: hook, scene count, total runtime, where the STICK KNOWLEDGE branding sits, and what the user can do next (generate/upload voiceover, build in Blender).
 - If a tool returns an error, read it, fix the input, and call the tool again. Do not give up after one validation error.
 
+Live Blender (tools named blender_*)
+- When the user asks you to build, model, animate or fix something in Blender, work in the LIVE open Blender: `blender_get_scene_info` → `blender_execute_python` (one shot or one hero asset per call, using `zdf` helpers and real modeling) → `blender_capture_viewport` → critique the image → fix → capture again, until the shot meets the reference quality (skill 02 §6). Then `blender_save_project`.
+- Organise each storyboard scene in its own collection with `zdf.setup_scene_collection(...)` and `zdf.finalize_scene_visibility(...)` using the scene's `start_frame`/`end_frame`, and give each scene a camera via `zdf.make_shot(...)` + `zdf.bind_camera_marker(...)`, so the whole Short lives in one project.blend timeline.
+- Never call `zdf.init_zdf_studio()` with the default `factory_reset=True` in the live session — use `factory_reset=False` (a factory reset would wipe the user's Blender preferences and disconnect the bridge).
+- If a blender_* tool says Blender is not connected, tell the user to click “Launch & Connect Blender” and stop; don't retry in a loop.
+- Tell the user briefly what you are building as you go (they are watching Blender update).
+
 Storyboard rules (details and measurements are in the skill files below)
 - Runtime ~30–35 s by default (up to ~60 s for essay-style topics), ~175 spoken words per minute, usually 12–18 scenes of 1.25–3 s so the picture changes with every caption phrase.
 - No intro or greeting: word one of the narration is the hook. Pick one script formula from skill 01 (imperative procedure, "If you…" consequence chain, or backwards causal chain) and end on its payoff/sting.
@@ -335,6 +342,7 @@ class TurnContext:
     emit: Emit
     affected_scenes: set[int] = field(default_factory=set)
     project_changed: bool = False
+    images: list[str] = field(default_factory=list)  # URLs of images tools produced (viewport captures)
 
 
 Handler = Callable[[dict[str, Any], TurnContext], Awaitable[ToolOutput]]
@@ -792,17 +800,23 @@ async def run_chat_turn(
 
         results: list[dict[str, Any]] = []
         for tu in tool_uses:
+            n_img = len(ctx.images)
             if stop_reason == "max_tokens" and tu is tool_uses[-1]:
                 content, is_error = (
                     "Your tool input was cut off by the output limit. Send a shorter input "
                     "(e.g. use patch_scenes for a few scenes at a time).", True)
             else:
                 content, is_error = await registry.run(tu.name, tu.input, ctx)
-            summary = content if isinstance(content, str) else f"{len(content)} content block(s)"
-            tool_log.append({"id": tu.id, "name": tu.name, "label": registry.label(tu.name),
-                             "ok": not is_error, "summary": summary[:400]})
-            await emit({"type": "tool_result", "id": tu.id, "name": tu.name, "ok": not is_error,
-                        "summary": summary[:400]})
+            new_imgs = ctx.images[n_img:]
+            summary = content if isinstance(content, str) else next(
+                (b.get("text", "") for b in content if b.get("type") == "text"), f"{len(content)} content block(s)")
+            desc = tu.input.get("description") if isinstance(tu.input, dict) else None
+            entry = {"id": tu.id, "name": tu.name, "label": desc or registry.label(tu.name),
+                     "ok": not is_error, "summary": summary[:400]}
+            if new_imgs:
+                entry["image_url"] = new_imgs[-1]
+            tool_log.append(entry)
+            await emit({"type": "tool_result", **entry})
             results.append({"type": "tool_result", "tool_use_id": tu.id,
                             "content": content, **({"is_error": True} if is_error else {})})
         messages.append({"role": "user", "content": results})

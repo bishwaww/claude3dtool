@@ -82,7 +82,7 @@ def probe_blender_environment(blender_path: Optional[str] = None) -> dict[str, A
         proc = subprocess.run(
             [exe, "--background", "--python-expr", probe_expr],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=35,
         )
         output = (proc.stdout or "") + "\n" + (proc.stderr or "")
@@ -199,7 +199,7 @@ print("__SK_BK_INSTALL__" + json.dumps(result))
         proc = subprocess.run(
             [env["blender_path"], "--background", "--python-expr", enable_expr],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
         )
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")

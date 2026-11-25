@@ -43,6 +43,35 @@ export interface ToolCallInfo {
   ok?: boolean;
   summary?: string;
   running?: boolean;
+  image_url?: string;
+}
+
+export interface BlenderStatus {
+  connected: boolean;
+  file?: string;
+  blender?: string;
+  port?: number;
+  dirty?: boolean;
+  zdf_helpers?: boolean;
+  error?: string;
+}
+
+export interface LiveCapture {
+  url: string;
+  frame?: number;
+  camera?: string;
+  ts: number;
+}
+
+export interface LiveRenderStatus {
+  running: boolean;
+  frame?: number;
+  start?: number;
+  end?: number;
+  done?: boolean;
+  cancelled?: boolean;
+  output?: string;
+  error?: string;
 }
 
 /** Server-Sent Event payloads streamed by POST /api/projects/{id}/chat */
@@ -54,7 +83,8 @@ export type ChatStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'text_block_end' }
   | { type: 'tool_start'; id: string; name: string; label: string }
-  | { type: 'tool_result'; id: string; name: string; ok: boolean; summary: string }
+  | { type: 'tool_result'; id: string; name: string; ok: boolean; summary: string; label?: string; image_url?: string }
+  | { type: 'viewport_capture'; url: string; frame?: number; camera?: string }
   | { type: 'notice'; text: string }
   | { type: 'project_updated'; project: Project }
   | { type: 'done'; assistant_message: ChatMessage; project: Project; usage: TokenUsageSummary }

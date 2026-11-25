@@ -110,6 +110,7 @@ def init_zdf_studio(
     cycles_samples: int = 64,
     fps: int = 30,
     cyclorama: bool = False,
+    factory_reset: bool = True,
 ) -> dict[str, Any]:
     """
     Initializes a clean Zack D. Films 9:16 (1080x1920, 30fps) studio scene:
@@ -119,8 +120,13 @@ def init_zdf_studio(
       - 3-point softbox studio area lighting (warm key, cool fill, crisp rim)
       - EEVEE Next (Raytracing) or Cycles GPU OptiX + OpenImageDenoise (6GB+ VRAM safe)
     """
-    # Wipe existing scene objects cleanly
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    # Wipe the scene. Headless builds use a factory reset; the LIVE bridge must pass
+    # factory_reset=False — a factory reset in an open Blender would reset the user's
+    # preferences and unload every add-on (including the bridge itself).
+    if factory_reset:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+    else:
+        clear_scene()
     scene = bpy.context.scene
 
     # Resolution & FPS (9:16 Shorts)
@@ -227,6 +233,40 @@ def init_zdf_studio(
     lights = _build_three_point_lighting(studio_col)
 
     return {"studio_collection": studio_col, "cyclorama": cyc, "lights": lights}
+
+
+def clear_scene(keep_world: bool = False) -> None:
+    """Remove every object, collection and orphan datablock from the current scene
+    without touching preferences or add-ons (safe inside a live Blender session)."""
+    scene = bpy.context.scene
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for col in list(bpy.data.collections):
+        bpy.data.collections.remove(col)
+    scene.timeline_markers.clear()
+    if scene.animation_data:
+        scene.animation_data_clear()
+    for coll in (bpy.data.meshes, bpy.data.curves, bpy.data.materials, bpy.data.cameras, bpy.data.lights,
+                 bpy.data.armatures, bpy.data.actions, bpy.data.node_groups, bpy.data.images):
+        for block in list(coll):
+            if block.users == 0 or (coll is bpy.data.actions and not block.use_fake_user):
+                try:
+                    coll.remove(block)
+                except Exception:
+                    pass
+    if not keep_world:
+        for w in list(bpy.data.worlds):
+            if w.users == 0 or w == scene.world:
+                scene.world = None
+                try:
+                    bpy.data.worlds.remove(w)
+                except Exception:
+                    pass
 
 
 def _build_studio_cyclorama(studio_col: bpy.types.Collection, bg_mode: str = "cyan_studio") -> bpy.types.Object:
@@ -1284,43 +1324,61 @@ def add_3d_sparks(
 def add_3d_label_sign(
     text: str = "WATER",
     location: Sequence[float] = (0.0, 0.0, 1.0),
-    scale: float = 0.13,
+    scale: float = 0.035,
     start_frame: int = 1,
     collection: Optional[bpy.types.Collection] = None,
+    pin_length: float = 0.0,
+    facing_rotation: Sequence[float] = (0.0, 0.0, 0.0),
+    dark: bool = False,
 ) -> bpy.types.Object:
-    """Crisp white floating 3D label placard (Zack D. Films callout style, sized for 9:16)."""
-    root = bpy.data.objects.new(f"ZDF_Label_{text[:12]}", None)
+    """
+    Label sign in the reference style: off-white board, dark letters, optional thin metal
+    pin below it (the 'WATER' / 'ETHANOL' signs stuck into bowls).
+    `scale` = letter height in METRES (0.035 suits a 0.22 m bowl; 0.12 suits a person).
+    Board width ≈ scale × (0.68 × letters + 1.2). The board faces −Y (towards a default
+    front camera); turn it with facing_rotation. `dark=True` gives white text on dark.
+    Pops in at start_frame (so capture a frame a few frames AFTER it).
+    """
+    label = text.upper()
+    root = bpy.data.objects.new(f"ZDF_Label_{label[:12]}", None)
     root.location = tuple(location)
+    root.rotation_euler = tuple(facing_rotation)
     _link_to_collection(root, collection)
 
-    # Dark backing pill for readability over cyan backdrop
-    w = max(0.36, len(text) * 0.085 + 0.18) * (scale / 0.13)
-    h = 0.19 * (scale / 0.13)
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0.03, 0))
-    pill = bpy.context.active_object
-    pill.name = f"ZDF_LabelPill_{text[:12]}"
-    pill.scale = (w, 0.04, h)
-    bpy.ops.object.transform_apply(scale=True)
-    pill.modifiers.new("Bevel", "BEVEL").width = 0.025
-    _shade_smooth_safe(pill)
-    assign_material(pill, create_pbr_material("dark_rubber", name="ZDF_LabelBg_Mat", base_color=(0.06, 0.08, 0.12, 1.0)))
-    _link_to_collection(pill, collection)
-    pill.parent = root
+    s = float(scale)
+    w, h, d = s * (0.68 * len(label) + 1.2), s * 1.9, s * 0.12
+    board = make_rounded_box(size=(w, d, h), location=(0, 0, 0), bevel=min(d * 0.45, s * 0.12), segments=3,
+                             name=f"ZDF_LabelBoard_{label[:12]}", collection=collection)
+    bg = hex_to_linear("#1B1F27") if dark else hex_to_linear("#F1F0EC")
+    fg = hex_to_linear("#FFFFFF") if dark else hex_to_linear("#1C1C1E")
+    assign_material(board, create_pbr_material("glossy_plastic", name=f"ZDF_LabelBoard_{'dark' if dark else 'light'}", base_color=bg))
+    board.parent = root
 
-    bpy.ops.object.text_add(location=(0, 0.0, 0))
-    txt = bpy.context.active_object
-    txt.name = f"ZDF_LabelTxt_{text[:12]}"
-    txt.data.body = text.upper()
-    txt.data.align_x = "CENTER"
-    txt.data.align_y = "CENTER"
-    txt.data.extrude = 0.012
-    txt.data.size = scale
+    cu = bpy.data.curves.new(f"ZDF_LabelTxt_{label[:12]}", "FONT")
+    cu.body = label
+    cu.align_x = "CENTER"
+    cu.align_y = "CENTER"
+    cu.size = s * 1.25
+    cu.extrude = s * 0.02
+    for fp in (r"C:\Windows\Fonts\arialbd.ttf", r"C:\Windows\Fonts\segoeuib.ttf"):
+        if os.path.isfile(fp):
+            try:
+                cu.font = bpy.data.fonts.load(fp, check_existing=True)
+            except Exception:
+                pass
+            break
+    txt = bpy.data.objects.new(cu.name, cu)
+    txt.location = (0, -d / 2 - s * 0.03, 0)
     txt.rotation_euler = (math.pi / 2, 0.0, 0.0)
-    txt.data.materials.append(
-        create_pbr_material("glowing_energy", name="ZDF_LabelWhite_Mat", base_color=(1.0, 1.0, 1.0, 1.0))
-    )
+    cu.materials.append(create_pbr_material("toon_flat", name=f"ZDF_LabelInk_{'dark' if dark else 'light'}", base_color=fg))
     _link_to_collection(txt, collection)
     txt.parent = root
+
+    if pin_length > 0:
+        pin = make_lathe([(0, 0), (s * 0.06, 0), (s * 0.06, pin_length), (0, pin_length)], segments=16, subsurf=0,
+                         name=f"ZDF_LabelPin_{label[:12]}", location=(0, 0, -h / 2 - pin_length),
+                         material=create_pbr_material("steel_polished"), collection=collection)
+        pin.parent = root
 
     _pop_in_scale(root, start_frame, pop_frames=8)
     return root
@@ -2142,6 +2200,40 @@ def make_tube(
     if material is not None:
         cu.materials.append(material)
     return obj
+
+
+def smart_uv(obj: bpy.types.Object, angle_deg: float = 66.0, margin: float = 0.003) -> bool:
+    """Smart-UV-project a mesh (needed before image decals/labels on arbitrary meshes).
+    Works headless and inside the live bridge. Returns True on success."""
+    if obj is None or obj.type != "MESH" or not obj.data.polygons:
+        return False
+    view_layer = bpy.context.view_layer
+    prev_active = view_layer.objects.active
+    prev_sel = [o for o in bpy.context.selected_objects]
+    try:
+        for o in prev_sel:
+            o.select_set(False)
+        view_layer.objects.active = obj
+        obj.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(angle_limit=math.radians(angle_deg), island_margin=margin)
+        return True
+    except Exception as e:
+        print(f"[zdf_helpers] smart_uv skipped for {obj.name}: {e}")
+        return False
+    finally:
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+        obj.select_set(False)
+        for o in prev_sel:
+            try:
+                o.select_set(True)
+            except Exception:
+                pass
+        view_layer.objects.active = prev_active
 
 
 def grow_tube(tube: bpy.types.Object, start_frame: int, end_frame: int) -> None:

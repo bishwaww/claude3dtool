@@ -64,7 +64,7 @@ Every object goes into `col`. All motion is keyframed inside `[start_frame, end_
 
 ## 6. Mandatory visual self-critique loop
 Code that runs is not a finished shot. When the live Blender bridge is connected, after building or changing a hero asset or a shot:
-1. Call `blender_capture_viewport` (camera view, the shot's key frame) and LOOK at the image.
+1. Call `blender_capture_viewport` at the shot's key frame — after pop-in graphics have finished (they are invisible on their start frame) — and LOOK at the image. For camera moves, also check the first and last frame.
 2. Critique it like a director, in this order:
    - **Framing:** subject inside the middle 60 % height of the 9:16 frame? Nothing important under the caption band (~70–85 % height)? Hero big enough? Readable silhouette?
    - **Scale & intersections:** objects floating, sinking into the table, clipping through each other, wrong relative sizes?

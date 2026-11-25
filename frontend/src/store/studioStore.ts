@@ -12,9 +12,12 @@ import type {
   ThinkingEffort,
   TokenUsageSummary,
   ToolCallInfo,
+  BlenderStatus,
+  LiveCapture,
+  LiveRenderStatus,
 } from '../types';
 
-export type ArtifactTab = 'storyboard' | 'previews' | 'console';
+export type ArtifactTab = 'storyboard' | 'live' | 'previews' | 'console';
 
 /** The assistant reply currently being streamed (Claude Desktop-style live bubble). */
 export interface StreamingReply {
@@ -38,6 +41,10 @@ interface StudioState {
   modelsError: string | null;
   streaming: StreamingReply | null;
   chatAbort: AbortController | null;
+  blender: BlenderStatus | null;
+  blenderBusy: 'launching' | 'capturing' | null;
+  liveCaptures: LiveCapture[];
+  liveRender: LiveRenderStatus | null;
   ffmpegPath: string;
   assetLibrary: AssetLibraryResponse | null;
 
@@ -77,6 +84,10 @@ interface StudioState {
   saveStoryboardEdits: (storyboard: StoryboardPlan) => Promise<void>;
   sendPrompt: (message: string) => Promise<void>;
   stopStreaming: () => void;
+  pollBlender: () => Promise<void>;
+  launchBlender: () => Promise<void>;
+  captureBlender: () => Promise<void>;
+  renderLive: (engine: 'EEVEE' | 'CYCLES') => Promise<void>;
   refreshModels: (force?: boolean) => Promise<void>;
   setChatModel: (modelId: string) => Promise<void>;
   setChatThinking: (enabled: boolean, effort?: ThinkingEffort) => Promise<void>;
@@ -104,6 +115,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   modelsError: null,
   streaming: null,
   chatAbort: null,
+  blender: null,
+  blenderBusy: null,
+  liveCaptures: [],
+  liveRender: null,
   ffmpegPath: '',
   assetLibrary: null,
 
@@ -195,6 +210,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
       // Live Claude model list (GET /v1/models) + asset library in background
       get().refreshModels();
+      // Live Blender connection badge
+      get().pollBlender();
+      setInterval(() => get().pollBlender(), 4000);
       api.getAssetLibrary().then((lib) => set({ assetLibrary: lib })).catch(() => {});
     } catch (e: any) {
       get().showToast('error', `Backend connection failed: ${e.message}`);
@@ -236,6 +254,66 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   stopStreaming: () => {
     get().chatAbort?.abort();
+  },
+
+  pollBlender: async () => {
+    try {
+      const st = await api.blenderStatus();
+      set({ blender: st });
+      const lr = get().liveRender;
+      if (st.connected && lr?.running) {
+        const rs = await api.blenderRenderStatus();
+        set({ liveRender: rs });
+        if (!rs.running && rs.done) get().showToast('success', `Render finished: ${rs.output}`);
+      }
+    } catch {
+      set({ blender: { connected: false, error: 'Backend not reachable' } });
+    }
+  },
+
+  launchBlender: async () => {
+    let active = get().activeProject;
+    if (!active) {
+      active = await get().createNewProject();
+      if (!active) return;
+    }
+    set({ blenderBusy: 'launching' });
+    try {
+      const res = await api.blenderLaunch(active.id);
+      set({ blender: res, artifactTab: 'live' });
+      get().showToast('success', res.reused ? 'Blender switched to this project.' : 'Blender is open and connected.');
+    } catch (e: any) {
+      get().showToast('error', `Could not connect Blender: ${e.message}`);
+    } finally {
+      set({ blenderBusy: null });
+      get().pollBlender();
+    }
+  },
+
+  captureBlender: async () => {
+    const active = get().activeProject;
+    if (!active) return;
+    set({ blenderBusy: 'capturing' });
+    try {
+      const res = await api.blenderCapture(active.id);
+      set((s) => ({ liveCaptures: [{ ...res, ts: Date.now() }, ...s.liveCaptures].slice(0, 24) }));
+    } catch (e: any) {
+      get().showToast('error', e.message);
+    } finally {
+      set({ blenderBusy: null });
+    }
+  },
+
+  renderLive: async (engine) => {
+    const active = get().activeProject;
+    if (!active) return;
+    try {
+      const rs = await api.blenderRender(active.id, engine);
+      set({ liveRender: rs });
+      get().showToast('info', `Rendering frames ${rs.start}–${rs.end} in Blender…`);
+    } catch (e: any) {
+      get().showToast('error', e.message);
+    }
   },
 
   refreshAssetLibrary: async () => {
@@ -464,8 +542,15 @@ export const useStudioStore = create<StudioState>((set, get) => ({
               patchStream((r) => ({
                 ...r,
                 tools: r.tools.map((t) =>
-                  t.id === evt.id ? { ...t, running: false, ok: evt.ok, summary: evt.summary } : t
+                  t.id === evt.id
+                    ? { ...t, running: false, ok: evt.ok, summary: evt.summary, label: evt.label || t.label, image_url: evt.image_url }
+                    : t
                 ),
+              }));
+              break;
+            case 'viewport_capture':
+              set((s) => ({
+                liveCaptures: [{ url: evt.url, frame: evt.frame, camera: evt.camera, ts: Date.now() }, ...s.liveCaptures].slice(0, 24),
               }));
               break;
             case 'notice':

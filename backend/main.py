@@ -56,6 +56,10 @@ from services.asset_manager import AssetManager
 from services.claude_director import normalize_storyboard, run_chat_turn
 from services.elevenlabs_service import ElevenLabsService
 from services.model_catalog import list_models
+from services import blender_bridge as live_blender
+from services.blender_tools import register_blender_tools
+
+register_blender_tools()
 from services.pipeline_manager import (
     PipelineManager,
     ensure_project_folder_structure,
@@ -499,6 +503,95 @@ async def api_open_in_blender(project_id: str):
         return runner.open_in_desktop_blender(blend_file)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==============================================================================
+# LIVE BLENDER BRIDGE
+# ==============================================================================
+
+@app.get("/api/blender/status")
+async def api_blender_status():
+    return await live_blender.bridge.status()
+
+
+@app.post("/api/blender/install")
+async def api_blender_install(force: bool = True):
+    try:
+        return await asyncio.to_thread(live_blender.install_addons, force)
+    except live_blender.BridgeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/blender/launch")
+async def api_blender_launch(body: dict[str, Any]):
+    """Launch & Connect: open desktop Blender on <target_folder>/project.blend with the bridge live."""
+    proj = get_project(body.get("project_id", "")) if body.get("project_id") else None
+    target = (proj or {}).get("target_folder") or body.get("target_folder")
+    if not target:
+        raise HTTPException(status_code=400, detail="Choose a project or target folder first.")
+    ensure_project_folder_structure(target)
+    try:
+        from services.branding import prepare_branding_assets
+        await asyncio.to_thread(prepare_branding_assets, Path(target) / "assets")
+    except Exception:
+        pass
+    try:
+        return await live_blender.launch(target, bg_mode=body.get("bg_mode", "cyan_studio"))
+    except live_blender.BridgeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/blender/capture")
+async def api_blender_capture(body: dict[str, Any]):
+    proj = get_project(body.get("project_id", ""))
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        res = await live_blender.bridge.call("capture_viewport", {k: v for k, v in body.items() if k in ("frame", "camera", "width")}, timeout=300)
+    except live_blender.BridgeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    import base64, time as _t
+    out_dir = Path(proj["target_folder"]) / "previews" / "live"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = f"capture_{int(_t.time() * 1000)}.png"
+    (out_dir / name).write_bytes(base64.b64decode(res["png_base64"]))
+    return {"url": f"/api/projects/{proj['id']}/media/live/{name}", "frame": res.get("frame"), "camera": res.get("camera")}
+
+
+@app.get("/api/projects/{project_id}/media/live/{name}")
+async def api_live_capture_file(project_id: str, name: str):
+    proj = get_project(project_id)
+    if not proj or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=404, detail="Not found.")
+    f = Path(proj["target_folder"]) / "previews" / "live" / name
+    if not f.is_file():
+        raise HTTPException(status_code=404, detail="Capture not found.")
+    return FileResponse(str(f), media_type="image/png")
+
+
+@app.post("/api/blender/render")
+async def api_blender_render(body: dict[str, Any]):
+    """Render the live project's animation to <target>/renders/frames (progress via /api/blender/render-status)."""
+    proj = get_project(body.get("project_id", ""))
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    params = {"output_dir": str(Path(proj["target_folder"]) / "renders" / "frames"),
+              "engine": body.get("engine", "EEVEE"), "samples": int(body.get("samples", 64))}
+    for k in ("start", "end", "resolution_pct"):
+        if body.get(k) is not None:
+            params[k] = int(body[k])
+    try:
+        return await live_blender.bridge.call("render_animation", params, timeout=60)
+    except live_blender.BridgeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/blender/render-status")
+async def api_blender_render_status():
+    try:
+        return await live_blender.bridge.call("render_status", timeout=5)
+    except live_blender.BridgeError as e:
+        return {"running": False, "error": str(e)}
 
 
 @app.post("/api/projects/{project_id}/render-final")

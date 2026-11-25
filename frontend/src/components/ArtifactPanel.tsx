@@ -7,8 +7,10 @@ import {
   ExternalLink,
   Video,
   Loader2,
+  Box,
 } from 'lucide-react';
 import { useStudioStore, type ArtifactTab } from '../store/studioStore';
+import { LiveBlenderTab } from './LiveBlender';
 import { StoryboardTab } from './StoryboardTab';
 import { PreviewsTab } from './PreviewsTab';
 import { ConsoleTab } from './ConsoleTab';
@@ -29,6 +31,7 @@ export const ArtifactPanel: React.FC = () => {
 
   const tabs: { id: ArtifactTab; label: string; icon: React.ReactNode }[] = [
     { id: 'storyboard', label: 'Storyboard & Script', icon: <Clapperboard className="w-3.5 h-3.5" /> },
+    { id: 'live', label: 'Live Blender', icon: <Box className="w-3.5 h-3.5" /> },
     { id: 'previews', label: 'Live Scene Previews', icon: <ImageIcon className="w-3.5 h-3.5" /> },
     { id: 'console', label: 'Blender Console & Budget', icon: <Terminal className="w-3.5 h-3.5" /> },
   ];
@@ -119,6 +122,7 @@ export const ArtifactPanel: React.FC = () => {
       {/* Active Tab Content */}
       <div className="flex-1 overflow-y-auto">
         {artifactTab === 'storyboard' && <StoryboardTab />}
+        {artifactTab === 'live' && <LiveBlenderTab />}
         {artifactTab === 'previews' && <PreviewsTab />}
         {artifactTab === 'console' && <ConsoleTab />}
       </div>

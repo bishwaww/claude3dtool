@@ -1,6 +1,8 @@
 import type {
   AssetLibraryResponse,
   BlenderKitStatus,
+  BlenderStatus,
+  LiveRenderStatus,
   ChatMessage,
   ChatStreamEvent,
   ClaudeModelOption,
@@ -98,6 +100,24 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   deleteProject: (id: string) => req<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
+
+  blenderStatus: () => req<BlenderStatus>('/api/blender/status'),
+  blenderLaunch: (projectId: string) =>
+    req<BlenderStatus & { ok: boolean; reused: boolean }>('/api/blender/launch', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId }),
+    }),
+  blenderCapture: (projectId: string, frame?: number) =>
+    req<{ url: string; frame?: number; camera?: string }>('/api/blender/capture', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId, ...(frame != null ? { frame } : {}) }),
+    }),
+  blenderRender: (projectId: string, engine: 'EEVEE' | 'CYCLES', samples = 64) =>
+    req<LiveRenderStatus>('/api/blender/render', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId, engine, samples }),
+    }),
+  blenderRenderStatus: () => req<LiveRenderStatus>('/api/blender/render-status'),
 
   listModels: (refresh = false) => req<ModelsResponse>(`/api/models${refresh ? '?refresh=true' : ''}`),
 

@@ -51,9 +51,18 @@ export const ToolChips: React.FC<{ tools: ToolCallInfo[] }> = ({ tools }) => {
             <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />
           )}
           <Wrench className="w-3.5 h-3.5 text-inkDim mt-0.5 shrink-0" />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <span className="text-ink">{t.label || t.name}</span>
             {t.summary && !t.running && <div className="text-inkDim truncate">{t.summary}</div>}
+            {t.image_url && (
+              <a href={t.image_url} target="_blank" rel="noreferrer">
+                <img
+                  src={t.image_url}
+                  alt="Blender camera view"
+                  className="mt-1.5 h-40 aspect-[9/16] object-cover rounded-md border border-borderSubtle"
+                />
+              </a>
+            )}
           </div>
         </div>
       ))}
