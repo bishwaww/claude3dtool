@@ -1,6 +1,6 @@
 # `zdf_helpers` API (import zdf_helpers as zdf) — Blender 4.2–5.3
 
-Colours: pass display hex through `zdf.hex_to_linear("#RRGGBB")`. Units: metres. Frames: `zdf.sec_to_frame(s)` (frame 1 = 0 s).
+Colours: pass display hex through `zdf.hex_to_linear("#RRGGBB")`. Units: metres. Frames: `zdf.sec_to_frame(seconds)` (frame 1 = 0 s).
 
 ## Studio, backdrop, timing
 - `zdf.configure(project_dir=None, assets_dir=None)` — where brand textures/assets live (the build/bridge calls it).
@@ -8,12 +8,12 @@ Colours: pass display hex through `zdf.hex_to_linear("#RRGGBB")`. Units: metres.
 - `zdf.set_studio_bg_keyframe(bg_mode, frame)` — hard switch at `frame`: `"cyan_studio"` (radial #9BDAF0→#31B9E6), `"sky_gradient"` (#52ABFB→#ACD6FE above the table line), `"dark_space"`, `"interior"`.
 - `zdf.setup_zdf_backdrop(bg_mode, glow_center=(0.5,0.46), glow_radius=0.62, horizon=0.40)` — rebuild the world (rarely needed).
 - `zdf.add_studio_tabletop(size=(3.2,1.6,0.06), location=(0,0,-0.03), wood="walnut", collection=None)` — top surface at z = loc.z + size.z/2.
-- `zdf.setup_scene_collection(scene_index, start_frame, end_frame) -> Collection`; `zdf.finalize_scene_visibility(col, start, end)` (call last); `zdf.show_between(obj, start, end)`.
+- `zdf.setup_scene_collection(scene_index, start_frame, end_frame) -> Collection` (named `Scene_01`, `Scene_02`, …; reuse the returned object rather than looking it up by name); `zdf.finalize_scene_visibility(col, start_frame, end_frame)` (call last); `zdf.show_between(obj, start_frame, end_frame)`.
 
 ## Modeling
 - `zdf.make_lathe(profile[(r,z),...], segments=64, name, location, cap_bottom=True, cap_top=False, thickness=0.0, subsurf=2, material=None, collection=None)` — revolve around Z; UV U=around, V=along profile.
 - `zdf.make_rounded_box(size=(x,y,z), location, bevel=0.02, segments=4, name, material=None, collection=None)` — full extents; box UVs.
-- `zdf.make_tube(points, radius=0.02, name, radii=None, resolution=10, smooth_path=True, caps=True, material=None, collection=None)` — curve tube; `zdf.grow_tube(tube, start, end)` animates it drawing on.
+- `zdf.make_tube(points, radius=0.02, name, radii=None, resolution=10, smooth_path=True, caps=True, material=None, collection=None)` — curve tube; `zdf.grow_tube(tube, start_frame, end_frame)` animates it drawing on.
 - `zdf.finish_surface(obj, bevel=0.0, bevel_segments=3, subsurf=0, weighted_normals=True, smooth=True)` — bevel → subsurf → weighted normals.
 - `zdf.smart_uv(obj)` — before image textures on arbitrary meshes.
 - `zdf.create_procedural_prop(kind, name, location, scale, material, collection)` — quick fallbacks: battery, bottle, mug, pan, phone, table, tube/esophagus, chamber/stomach, bone, gear, box/plate, human_bust.
@@ -50,9 +50,9 @@ Colours: pass display hex through `zdf.hex_to_linear("#RRGGBB")`. Units: metres.
 - `zdf.list_mixamo_bones(armature)`.
 
 ## Camera & animation
-- `zdf.make_shot(preset, target, start, end, distance=0.6, azimuth_deg=-90, elevation_deg=12, sweep_deg=25, lens=50, fstop=2.2, collection, name)` — presets push_in, pull_back, orbit, crane_down, crane_up, slide, macro_creep, static.
+- `zdf.make_shot(preset, target, start_frame, end_frame, distance=0.6, azimuth_deg=-90, elevation_deg=12, sweep_deg=25, lens=50, fstop=2.2, collection, name)` — presets push_in, pull_back, orbit, crane_down, crane_up, slide, macro_creep, static. Pass frames as keywords or positionally; the names are `start_frame`/`end_frame` (not start/end).
 - `zdf.setup_cinematic_camera(keyframes[(frame,(x,y,z))], target_obj=None, target_location, lens, dof_fstop, collection, name)` — custom paths.
-- `zdf.animate_transform(obj, [(frame, loc, rot, scale), ...], interpolation="BEZIER")` · `zdf.bind_camera_marker(scene, cam, frame, name)`.
+- `zdf.animate_transform(obj, [(frame, loc, rot, scale), ...], interpolation="BEZIER")` · `zdf.bind_camera_marker(scene, camera_obj, frame, name)`.
 
 ## Save & render
-- `zdf.pack_and_save_project(path)` · `zdf.render_scene_preview(frame, out_png, camera_obj, preview_scale_pct=50)` · `zdf.render_animation(start, end, out_dir, render_engine, cycles_samples)`.
+- `zdf.pack_and_save_project(filepath)` · `zdf.render_scene_preview(frame, output_path, camera_obj, preview_scale_pct=50)` · `zdf.render_animation(start_frame, end_frame, output_dir, render_engine, cycles_samples)`.
