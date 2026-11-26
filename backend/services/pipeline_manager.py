@@ -14,7 +14,7 @@ from config import BACKEND_DIR
 from database import get_project, get_settings, get_token_usage_summary, update_project
 from services.asset_manager import AssetManager
 from services.branding import prepare_branding_assets
-from services.claude_director import ClaudeDirector
+from services.claude_director import ClaudeDirector, script_problem
 from services.elevenlabs_service import (
     ElevenLabsService,
     estimate_timestamps_from_storyboard,
@@ -518,6 +518,10 @@ class PipelineManager:
             resolved_list = []
             for asset_req in s.get("assets", []):
                 if asset_req.get("status") == "resolved" and asset_req.get("local_path") and Path(asset_req["local_path"]).is_file():
+                    lp = Path(asset_req["local_path"])
+                    if lp.name.startswith("ph_") and lp.suffix in (".blend", ".gltf"):
+                        # Older builds fetched Poly Haven models without their textures.
+                        await self.assets._download_polyhaven_asset(lp.stem[3:], "models", lp.parent)
                     resolved_list.append(asset_req)
                     continue
                 res = await self.assets.resolve_asset(
@@ -565,6 +569,31 @@ class PipelineManager:
                 s["script_stale"] = False
             s["script_file"] = str(script_file)
 
+        # 3b. Never hand Blender a script that cannot even be parsed (e.g. a reply cut off at the
+        # output limit): regenerate it now instead of failing the whole build on it.
+        for s in scenes:
+            idx = int(s["scene_index"])
+            script_file = paths["scripts"] / f"scene_{idx:02d}.py"
+            if not script_file.is_file():
+                continue
+            problem = script_problem(script_file.read_text(encoding="utf-8", errors="replace"))
+            if not problem:
+                continue
+            if not has_api_key:
+                await self._log(project_id, "claude", f"scene_{idx:02d}.py is broken ({problem}); using the built-in template.")
+                script_file.write_text(generate_fallback_scene_script(s, sb.get("branding_placement", {})), encoding="utf-8")
+                continue
+            await self._log(project_id, "self_heal", f"scene_{idx:02d}.py is broken ({problem}). Regenerating it compactly...")
+            try:
+                code, usage = await asyncio.to_thread(
+                    director.generate_scene_script, project_id=project_id, scene=s,
+                    branding_placement=sb.get("branding_placement", {}))
+                script_file.write_text(code, encoding="utf-8")
+                await self._log(project_id, "self_heal", f"scene_{idx:02d}.py regenerated (${usage['cost_usd']:.4f}).")
+                await self.emit(project_id, {"type": "usage_updated", "usage": get_token_usage_summary(project_id)})
+            except Exception as e:
+                await self._log(project_id, "error", f"Could not regenerate scene_{idx:02d}.py: {e}")
+
         # 4. Write master_build.py and execute Headless Blender (with 1-retry Claude self-heal!)
         await self._progress(project_id, "blender", 65, "Building project.blend & rendering scene previews in headless Blender...")
         render_engine = settings.get("render_engine", "EEVEE_NEXT")
@@ -586,23 +615,31 @@ class PipelineManager:
 
         run_res = await runner.run_script(master_file, cwd=paths["root"], log=_blender_log)
 
-        # Automatic 1-retry Claude Self-Heal if a bpy script error occurs!
-        if not run_res["ok"] and has_api_key and run_res.get("failed_scene_file"):
+        # Claude self-heal: each failing scene gets one fix; up to 4 scenes per build.
+        healed: set[str] = set()
+        while (not run_res["ok"] and has_api_key and run_res.get("failed_scene_file")
+               and run_res["failed_scene_file"] not in healed and len(healed) < 4):
             bad_name = run_res["failed_scene_file"]
             bad_path = paths["scripts"] / bad_name
-            if bad_path.is_file():
-                await self._log(project_id, "self_heal", f"Detected bpy error in {bad_name}. Triggering automatic Claude 1-retry self-heal...")
+            if not bad_path.is_file():
+                break
+            healed.add(bad_name)
+            await self._log(project_id, "self_heal", f"Detected bpy error in {bad_name}. Asking Claude to fix it...")
+            try:
                 fixed_code, heal_usage = await asyncio.to_thread(
                     director.self_heal_script,
                     project_id=project_id,
                     script_name=bad_name,
-                    broken_code=bad_path.read_text(encoding="utf-8"),
+                    broken_code=bad_path.read_text(encoding="utf-8", errors="replace"),
                     error_traceback=run_res["output"],
                 )
-                bad_path.write_text(fixed_code, encoding="utf-8")
-                await self._log(project_id, "self_heal", f"Patched {bad_name} (${heal_usage['cost_usd']:.4f}). Re-running Blender build...")
-                await self.emit(project_id, {"type": "usage_updated", "usage": get_token_usage_summary(project_id)})
-                run_res = await runner.run_script(master_file, cwd=paths["root"], log=_blender_log)
+            except Exception as e:
+                await self._log(project_id, "error", f"Self-heal of {bad_name} failed: {e}")
+                break
+            bad_path.write_text(fixed_code, encoding="utf-8")
+            await self._log(project_id, "self_heal", f"Patched {bad_name} (${heal_usage['cost_usd']:.4f}). Re-running Blender build...")
+            await self.emit(project_id, {"type": "usage_updated", "usage": get_token_usage_summary(project_id)})
+            run_res = await runner.run_script(master_file, cwd=paths["root"], log=_blender_log)
 
         # Refresh preview paths on scenes
         for s in scenes:
@@ -646,6 +683,16 @@ class PipelineManager:
 
         paths = ensure_project_folder_structure(project["target_folder"])
         blend_file = paths["root"] / "project.blend"
+        # The render reads project.blend from disk: save the live Blender first if it has this file open.
+        try:
+            from services import blender_bridge as live_blender
+            st = await live_blender.bridge.status()
+            if st.get("connected") and st.get("dirty") and st.get("file") \
+                    and Path(st["file"]).resolve() == blend_file.resolve():
+                await live_blender.bridge.call("save_project", {}, timeout=120)
+                await self._log(project_id, "pipeline", "Saved the open Blender project before rendering.")
+        except Exception as e:
+            await self._log(project_id, "pipeline", f"Could not save the live Blender project first: {e}")
         if not blend_file.is_file():
             await self._log(project_id, "pipeline", "project.blend missing; building project first...")
             build_res = await self.build_blend_project(project_id, render_previews=False)
@@ -686,6 +733,10 @@ class PipelineManager:
         )
         if not run_res["ok"]:
             update_project(project_id, status="error")
+            if "SK_NO_CAMERA" in (run_res.get("output") or ""):
+                raise RuntimeError("project.blend has no scenes or camera yet, so there is nothing to render. "
+                                   "Run Build/Update .blend (or ask Claude to build the shots in Blender) and "
+                                   "render once the build finishes without errors.")
             raise RuntimeError("Blender animation render failed. Check Blender Console for details.")
 
         await self._progress(project_id, "ffmpeg", 85, "Assembling 1080x1920 final_short.mp4 with captions & audio...")

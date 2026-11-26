@@ -28,7 +28,7 @@ Colours: pass display hex through `zdf.hex_to_linear("#RRGGBB")`. Units: metres.
 
 ## Cutaways
 - `zdf.cutaway_layers([(obj, cap_mat), ...], cutter_size=(2,2,2), cutter_location=(0,-1,0), start_frame=None, end_frame=None, slide_from=(0,-2.5,0), name, collection) -> root_empty` — shared exact Boolean, per-layer flat cap material, optional slide-in reveal.
-- `zdf.apply_animated_cutaway(target_obj, cutter_bounds, start_frame, end_frame, cap_material, collection)` — older single-object version.
+- `zdf.apply_animated_cutaway(target_obj, cutter_bounds, start_frame, end_frame, cap_material, collection)` — older single-object version; `cutter_bounds` is `((x0,x1),(y0,y1),(z0,z1))` or two corners `(min_xyz, max_xyz)`; `cap_material` is a preset name or a Material.
 
 ## Explainer graphics
 - `zdf.add_outlined_arrow(location, direction=(0,0,1), facing=(0,-1,0), length=0.25, width=None, color="#E5321F", outline=None, depth=None, start_frame=1, pop_frames=7, nudge=True, collection, name)` — flat arrow, thick black outline (reference style).

@@ -904,7 +904,28 @@ def _extract_python_code(text: str) -> str:
     blocks = re.findall(r"```(?:python|py)?\s*\n(.*?)```", text, flags=re.DOTALL)
     if blocks:
         return max(blocks, key=len).strip()
-    return text.strip()
+    # Unclosed fence (reply cut off at max_tokens): drop the opening fence line.
+    text = re.sub(r"^\s*```(?:python|py)?[ \t]*\n", "", text.strip())
+    return re.sub(r"\n```\s*$", "", text).strip()
+
+
+def script_problem(code: str, require_build_scene: bool = True) -> Optional[str]:
+    """Why a scene script cannot run (None when it compiles and defines build_scene)."""
+    try:
+        compile(code, "<scene_script>", "exec")
+    except SyntaxError as e:
+        return f"SyntaxError line {e.lineno}: {e.msg}"
+    if require_build_scene and not re.search(r"^def build_scene\s*\(", code, flags=re.M):
+        return "missing `def build_scene(ctx)`"
+    return None
+
+
+_COMPACT_RETRY = (
+    "\n\nIMPORTANT: your previous answer {why}. Write the COMPLETE file again, much more compactly: "
+    "at most ~350 lines, reuse zdf helpers (make_lathe, make_rounded_box, make_tube, cutaway_layers, "
+    "make_shot, add_3d_label_sign, ...) instead of long hand-written geometry, no long comments. "
+    "It must be valid Python that compiles, inside one ```python ... ``` block."
+)
 
 
 class ClaudeDirector:
@@ -940,7 +961,28 @@ class ClaudeDirector:
             raise RuntimeError(f"Claude declined to generate {operation}.")
         text = "\n".join(b.text for b in response.content if b.type == "text").strip()
         usage = _usage_record(project_id, operation, getattr(response, "model", self.model) or self.model, response.usage)
+        usage["stop_reason"] = response.stop_reason
         return text, usage
+
+    def _call_for_script(self, *, project_id: Optional[str], operation: str, user_prompt: str) -> tuple[str, dict[str, Any]]:
+        """Ask for a Python file. If it was cut off or does not compile, retry once asking for a compact
+        version; raise rather than return code that cannot run."""
+        raw, usage = self._call_claude(project_id=project_id, operation=operation, user_prompt=user_prompt)
+        code = _extract_python_code(raw)
+        problem = "was cut off at the output limit" if usage.get("stop_reason") == "max_tokens" else None
+        if not problem and (p := script_problem(code)):
+            problem = f"did not compile ({p})"
+        if not problem:
+            return code, usage
+        raw2, usage2 = self._call_claude(project_id=project_id, operation=f"{operation}_retry",
+                                         user_prompt=user_prompt + _COMPACT_RETRY.format(why=problem))
+        code2 = _extract_python_code(raw2)
+        p2 = script_problem(code2) or ("was cut off again" if usage2.get("stop_reason") == "max_tokens" else None)
+        total = {**usage2, **{k: usage.get(k, 0) + usage2.get(k, 0) for k in
+                              ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "cost_usd")}}
+        if p2:
+            raise RuntimeError(f"Claude could not produce a runnable script for {operation} ({p2}).")
+        return code2, total
 
     def generate_scene_script(
         self,
@@ -969,6 +1011,7 @@ class ClaudeDirector:
             "9. Call `zdf.finalize_scene_visibility(col, ctx['start_frame'], ctx['end_frame'])` before returning.",
             "10. Return `{'camera': cam, 'collection': col, 'preview_frame': int((ctx['start_frame'] + ctx['end_frame']) // 2)}`.",
             "11. Output ONLY the Python file inside one ```python ... ``` block. Compatible with Blender 4.2 through 5.x.",
+            "12. Keep it compact (aim for under ~400 lines): lean on zdf helpers rather than long hand-written geometry.",
             "",
             f"SCENE SPECIFICATION:\n{json.dumps(scene, indent=2, ensure_ascii=False)}",
             f"GLOBAL DIEGETIC BRANDING PLACEMENT:\n{json.dumps(branding_placement, indent=2, ensure_ascii=False)}",
@@ -976,9 +1019,8 @@ class ClaudeDirector:
         if edit_instruction and existing_code:
             parts.append(f"\nEXISTING SCRIPT TO UPDATE:\n```python\n{existing_code}\n```")
             parts.append(f"\nSPECIFIC EDIT REQUEST:\n{edit_instruction}")
-        raw, usage = self._call_claude(project_id=project_id, operation=f"generate_scene_{idx:02d}",
-                                       user_prompt="\n".join(parts))
-        return _extract_python_code(raw), usage
+        return self._call_for_script(project_id=project_id, operation=f"generate_scene_{idx:02d}",
+                                     user_prompt="\n".join(parts))
 
     def self_heal_script(
         self,
@@ -995,5 +1037,4 @@ class ClaudeDirector:
             f"ERROR TRACEBACK:\n```\n{error_traceback[-4000:]}\n```\n\n"
             f"CURRENT CODE:\n```python\n{broken_code}\n```"
         )
-        raw, usage = self._call_claude(project_id=project_id, operation=f"self_heal_{script_name}", user_prompt=prompt)
-        return _extract_python_code(raw), usage
+        return self._call_for_script(project_id=project_id, operation=f"self_heal_{script_name}", user_prompt=prompt)

@@ -843,6 +843,17 @@ def create_procedural_prop(
 # 6. ANIMATED BOOLEAN CUTAWAY
 # ==============================================================================
 
+def _normalize_cutter_bounds(bounds: Any) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    """Accept ((x0,x1),(y0,y1),(z0,z1)) or two corners ((x0,y0,z0),(x1,y1,z1)) / Vectors."""
+    items = [tuple(float(v) for v in b) for b in bounds]
+    if len(items) == 2 and all(len(b) == 3 for b in items):
+        lo, hi = items
+        return tuple((min(a, b), max(a, b)) for a, b in zip(lo, hi))  # type: ignore[return-value]
+    if len(items) == 3 and all(len(b) == 2 for b in items):
+        return tuple((min(a, b), max(a, b)) for a, b in items)  # type: ignore[return-value]
+    raise ValueError("cutter_bounds must be ((x0,x1),(y0,y1),(z0,z1)) or ((x0,y0,z0),(x1,y1,z1))")
+
+
 def apply_animated_cutaway(
     target_obj: bpy.types.Object,
     cutter_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] = (
@@ -866,7 +877,7 @@ def apply_animated_cutaway(
     if not meshes:
         return None
 
-    (x0, x1), (y0, y1), (z0, z1) = cutter_bounds
+    (x0, x1), (y0, y1), (z0, z1) = _normalize_cutter_bounds(cutter_bounds)
     cx, cy, cz = (x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5
     sx, sy, sz = max(0.05, x1 - x0), max(0.05, y1 - y0), max(0.05, z1 - z0)
 
@@ -880,7 +891,7 @@ def apply_animated_cutaway(
     cutter["zdf_always_hidden"] = True
     _link_to_collection(cutter, collection)
 
-    cap_mat = create_pbr_material(cap_material)
+    cap_mat = cap_material if isinstance(cap_material, bpy.types.Material) else create_pbr_material(str(cap_material or "muscle_cutaway"))
     assign_material(cutter, cap_mat)
 
     # Animate cutter sliding smoothly into cutaway position
@@ -1535,6 +1546,14 @@ def render_animation(
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.filepath = str(out_dir / "frame_")
+    if scene.camera is None:
+        # Live-built shots bind cameras through timeline markers; fall back to the earliest one.
+        marked = sorted((m for m in scene.timeline_markers if m.camera), key=lambda m: m.frame)
+        cams = [o for o in scene.objects if o.type == "CAMERA"]
+        scene.camera = marked[0].camera if marked else (cams[0] if cams else None)
+    if scene.camera is None:
+        raise RuntimeError("SK_NO_CAMERA: this .blend has no camera, so there is nothing to render. "
+                           "The scene build did not finish - build the scenes first, then render.")
     bpy.ops.render.render(animation=True)
     return str(out_dir)
 

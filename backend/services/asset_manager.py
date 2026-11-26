@@ -317,6 +317,7 @@ class AssetManager:
 
                 url = None
                 ext = ".gltf"
+                include: dict[str, Any] = {}  # side files (textures/...) the .blend/.gltf references
                 if ph_type == "models":
                     # Prefer gltf 2k/1k or blend 2k/1k
                     gltf_node = files_data.get("gltf", {})
@@ -324,10 +325,12 @@ class AssetManager:
                     for res in ("2k", "1k", "4k"):
                         if res in blend_node and "blend" in blend_node[res]:
                             url = blend_node[res]["blend"].get("url")
+                            include = blend_node[res]["blend"].get("include") or {}
                             ext = ".blend"
                             break
                         if res in gltf_node and "gltf" in gltf_node[res]:
                             url = gltf_node[res]["gltf"].get("url")
+                            include = gltf_node[res]["gltf"].get("include") or {}
                             ext = ".gltf"
                             break
                 elif ph_type == "hdris":
@@ -342,6 +345,7 @@ class AssetManager:
                     for res in ("2k", "1k"):
                         if res in blend_node and "blend" in blend_node[res]:
                             url = blend_node[res]["blend"].get("url")
+                            include = blend_node[res]["blend"].get("include") or {}
                             ext = ".blend"
                             break
 
@@ -357,6 +361,22 @@ class AssetManager:
                     cache_file.write_bytes(dl.content)
 
                 shutil.copy2(cache_file, dest_file)
+                # Poly Haven .blend/.gltf files load their textures from relative paths
+                # (e.g. textures/x_diff_2k.jpg); without them the model renders pink.
+                for rel, meta in include.items():
+                    rel_path = Path(rel)
+                    if rel_path.is_absolute() or ".." in rel_path.parts or not (meta or {}).get("url"):
+                        continue
+                    cached = POLYHAVEN_CACHE_DIR / rel_path
+                    if not (cached.is_file() and cached.stat().st_size > 0):
+                        cached.parent.mkdir(parents=True, exist_ok=True)
+                        tex = await client.get(meta["url"], headers=POLYHAVEN_HEADERS)
+                        tex.raise_for_status()
+                        cached.write_bytes(tex.content)
+                    out = target_assets_dir / rel_path
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    if not out.is_file():
+                        shutil.copy2(cached, out)
                 return dest_file
         except Exception:
             return None
